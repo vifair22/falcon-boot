@@ -1,74 +1,150 @@
 # falcon-boot
 
-A single-purpose, auditable multi-boot loader for x86-64 UEFI, with an
-opt-in BIOS loader alongside that is i586 code and runs on 32-bit machines
-too. A distilled Ventoy.
+One USB stick that boots the ISOs you copy onto it, and an encrypted
+operating system of your own beside them: on UEFI machines, x86-64 and
+AArch64, and on BIOS PCs back to 32-bit i686 processors, with Secure Boot
+on or off.
 
-- **Drag-and-drop ISO booting.** Copy an `.iso` onto the stick's exFAT
-  partition from any OS; it appears in the boot menu and boots. Linux ISOs
-  boot their own kernel with a small hook that maps the ISO back into place
-  for the distro to find; Windows install ISOs boot stock, patched in memory
-  as they are served; FreeBSD boots from a memory disk of its own ISO.
-- **Personal encrypted OS.** Boots a Unified Kernel Image off a LUKS2+ext4
-  partition; its initramfs unlocks the real root and home and pivots in,
-  from one passphrase prompt.
-- **Secure Boot kept.** Everything the loader launches goes through shim's
-  verification: with Secure Boot on, only what verifies against db or the
-  enrolled MOK boots, and media is blessed (signed with your own key, on a
-  host or on the stick's own signing appliance) to boot that way; with it
-  off, anything boots. The loader never signs and never relaxes enforcement.
-  `docs/DESIGN.md` Section 7 is the model.
-- **A machine's own boot loader.** The same loader installed on a disk
-  (`falcon-boot-mkstick station install`, DESIGN Section 12), with a boot
-  list, chains to other systems, and on UEFI a TPM-backed TOTP code shown
-  before the passphrase prompt.
-- **falcon jump.** A boot floppy for a BIOS machine that cannot boot a USB
-  stick or a PC Card (DESIGN Section 13): its own ATA, USB and PC Card
-  drivers bring the stick up and hand over to it.
+![The stick's menu under UEFI](docs/img/stick-menu.png)
 
-The UEFI loader is x86-64 only, with no 32-bit UEFI. The BIOS loader is
-opt-in (`make bios`, `falcon-boot-mkstick bios`): a BIOS machine has no
-Secure Boot, so on that route nothing is verified and nothing is blessed.
+Copy `.iso` files onto the stick's exFAT partition from any computer. They
+appear in the menu and boot: Linux, Windows install media, FreeBSD,
+Proxmox, TrueNAS, ESXi, rescue and imaging tools, memtest86+. The same
+stick carries a personal OS on an encrypted partition, unlocked by one
+passphrase before it boots. The same loader can also be installed on a
+machine's own disk as its boot loader, and a 1.44 MB floppy reaches the
+stick from machines too old to boot USB.
 
-`docs/DESIGN.md` is the design, present tense, Section 11 drawing every boot
-route of both loaders. `docs/Manual.md` is the operator's reference: the
-menu, the route codes, Secure Boot states and enrollment, blessing, the
-station and its `STATION.INI`, jump, every `falcon-boot-mkstick` command,
-troubleshooting by failure page, and building and testing.
+falcon-boot is written from the firmware up in C: its own UEFI loader, its
+own BIOS loader, its own filesystem, LUKS2 and Windows-image code. It is
+GPL-3.0-or-later.
 
-## Layout
+## One loader, five forms
 
+| form | what it is | runs on |
+|---|---|---|
+| **The stick** | A USB stick with four partitions: the boot partition, an exFAT ISO library, an encrypted shelf of personal-OS images, and an encrypted root for that OS (Manual Section 10.1). | UEFI on x86-64 and AArch64; BIOS on i686 and later, 32-bit machines included |
+| **The station** | falcon installed on a machine's own disk as its boot loader, beside what is already there: a boot list with a countdown, Windows Boot Manager, other firmware entries, memtest86+, the personal OS, and on UEFI a TOTP code released by the TPM only while the firmware and boot chain are what they were at enrollment, to compare with an authenticator before typing the passphrase (Manual Section 7). | UEFI on x86-64 and AArch64; BIOS on i686 and later |
+| **station-legacy** | The BIOS station plus falcon jump's drivers, for a machine whose BIOS cannot boot a CD, a USB stick or a CF card (Manual Section 7.7). | BIOS, i686 and later |
+| **falcon jump** | A 1.44 MB boot floppy with its own IDE CD, USB (UHCI, OHCI, EHCI) and PC Card drivers: it boots the CD drive, a falcon stick on USB or a CompactFlash card on machines whose BIOS cannot (Manual Section 9). | BIOS, i686 and later |
+| **The signing appliance** | A small Linux image on the stick that signs media with the stick's own key, so it boots with Secure Boot on. Started from the menu; no other computer needed (Manual Section 4.2). | UEFI |
+
+![The station's boot list and TOTP code](docs/img/station.png)
+
+## What happens when you pick an ISO
+
+falcon looks inside every image on the stick while the menu is up and
+picks the route that suits it. Each route has a code, shown on the screen
+while it boots (Manual Section 2).
+
+| what you picked | what falcon does | code |
+|---|---|---|
+| A Linux ISO | Starts the ISO's own kernel and initrd directly, with a small program appended to the initrd that maps the ISO back into place for the distro to find. No loopback config, no per-distro scripts. | `DIR` |
+| A Linux ISO, Secure Boot on | Starts the distro's own Microsoft-signed shim, which verifies the distro's own signed kernel, or the distro's signed GRUB with a menu falcon serves in place of its own. Nothing is re-signed. | `D3A`, `D3B` |
+| Any image, blessed | Boots an image you have signed with your own key: a Linux ISO wrapped as a signed UKI, or a BSD or memtest86+ loader signed as it is. | `BLS`, `BLB` |
+| Windows install media: 8.1 to 11 on UEFI, Vista to 11 on BIOS | Boots it unmodified on disk: `boot.wim` is patched in memory as it is served, so Setup finds its own ISO. | `WIN` |
+| Windows XP, BIOS | Edits text-mode Setup's `txtsetup.sif` in memory to load falcon's virtual-CD driver, then runs Setup off a virtual CD that stays resident. | `WXP` |
+| A BSD | Serves the ISO to its own loader as a memory disk. | `BSD` |
+| Anything else | Chains the ISO's own boot loader off a virtual CD. | `CHN` |
+| A `.img` or an `.efi` | Serves the disk image and starts its boot loader, or starts the `.efi` itself. | `IMG`, `EFI` |
+| The personal OS | Unlocks the shelf, starts the OS's UKI, and hands the passphrase to its initramfs so the root opens without a second prompt. | `POS` |
+
+![Booting a Linux ISO through its own shim](docs/img/booting.png)
+
+### Measured on real media
+
+Every release is tested by booting 63 ISOs under six firmware states:
+Secure Boot off; on with Microsoft's keys; on with only your own keys; on
+with shim's validation off; BIOS; and BIOS on a 32-bit i686. A merge
+into `master` fails if any image that booted before no longer does.
+
+The mainstream tier, 27 images (Debian, Fedora, Ubuntu, Mint, openSUSE,
+Arch, Manjaro, CachyOS, Pop!_OS, Kali, SystemRescue, Clonezilla, GParted,
+Windows 10, 11 and Server 2025, and others), boots on Enter, falcon's
+default route, every time: with Secure Boot off, with Secure Boot on under
+Microsoft's keys, and on BIOS. With Secure Boot on, an image Microsoft did
+not sign is refused by the platform and boots once blessed. The second tier,
+Proxmox and TrueNAS among them, is at 100% too. `docs/coverage.md` is the
+full matrix, cell by cell, including what does not boot yet.
+
+## Secure Boot, kept on
+
+Everything falcon starts is verified by the platform through shim, the
+same way a distro's own boot loader is. Media verifies against Microsoft's
+keys, or against a key that is yours alone: each stick makes its own key
+pair, you enroll its certificate once per machine, and you sign ("bless")
+media with it on the stick's own appliance or on any Linux host. falcon
+verifies; it never signs, and it holds no key. `docs/DESIGN.md` Section 7
+is the model.
+
+## How it compares with Ventoy
+
+Ventoy made "copy ISOs to a stick and boot them" the normal way to carry
+installers, and it is the right tool for many people. falcon takes the
+same idea in a different direction:
+
+- **Secure Boot is on, with your keys.** Distro media boots through its own
+  signed loaders, and anything else is signed with a key that belongs to
+  you and to one stick.
+- **A personal OS travels with the ISOs.** LUKS2-encrypted, a UKI on an
+  encrypted shelf, one passphrase from power-on to desktop.
+- **It doubles as a machine's boot loader.** The station, with a TPM-sealed
+  TOTP check before the passphrase.
+- **It reaches old hardware.** A BIOS loader for 32-bit i686 machines,
+  Windows XP Setup, and a floppy for machines that cannot boot USB at
+  all.
+- **One codebase, written to be read.** Both loaders, the host tools and
+  the appliance share one C library, tested on the host, and every boot
+  route is drawn in `docs/DESIGN.md` Section 11.
+
+![Unlocking the personal OS](docs/img/personal-os.png)
+
+## Quick start
+
+On Arch, add the signed `falcon` repository (Manual Section 14.3) and
+install `falcon-boot-bin`. Elsewhere, download the tarball for your
+machine from the [releases page](https://git.airies.net/vifair22/falcon-boot/-/releases),
+check it against `SHA256SUMS`, and unpack it under `/`:
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS
+tar xzf falcon-boot-X.Y.Z-<arch>.tar.gz
+sudo cp -r falcon-boot-X.Y.Z/usr/. /usr/
 ```
-apps/              the loaders: stick/, station/, station-legacy/, jump/
-falcon-core/       firmware-free libraries every other component links:
-                   crypto, TPM, the exFAT, ext4, FAT, ISO9660 and UDF drivers,
-                   LUKS2, partition tables, the PE walker, boot predictions,
-                   media logic, WIM, the manifest, the screen layout
-falcon-efi/        the UEFI loader (x64 PE32+) and its QEMU/OVMF rigs
-falcon-bios/       the BIOS loader (three stages into i586 protected mode),
-                   jump's drivers, and the SeaBIOS rigs
-falcon-cli/        host tools: falcon-boot-mkstick, falcon-boot-sign
-falcon-appliance/  the on-stick signing appliance: PID 1 and its image recipe
-falcon-hook/       the initrd program that maps an ISO for a Linux distro
-falcon-winjump/    the WinPE program that attaches a Windows ISO for Setup
-falcon-vdisk/      the WinPE virtual-CD driver for Windows older than 8
-docs/              DESIGN.md, Manual.md, coverage.md (the corpus scorecard)
-tools/             the static-analysis gate, the processor-floor check,
-                   and coverage/, the harness that produces docs/coverage.md
+
+Then make a stick, add the BIOS loader if you want it, and copy ISOs onto
+the partition labelled `FALCON-ISO`:
+
+```sh
+sudo falcon-boot-mkstick create /dev/disk/by-id/usb-<your stick> --force
+sudo falcon-boot-mkstick bios /dev/disk/by-id/usb-<your stick>
 ```
 
-Each component has `src/`, `tests/` and `tools/` as it needs them and a
-`build.mk` the root Makefile includes; it is one build, not nine.
+With Secure Boot on, the first boot opens MokManager: enroll
+`falcon-boot.cer` from the stick's boot partition and reboot (Manual
+Section 3.1). `docs/Manual.md` is the full reference: the menu, every
+route, blessing, the personal OS, the station and `STATION.INI`, jump, every
+`falcon-boot-mkstick` command, and what to do on each failure page.
+
+The personal OS itself is a separate project:
+[archusb](https://git.airies.net/vifair22/archusb) holds an Arch install's
+build runbook and the OS side of the passphrase handoff as a mkinitcpio
+hook, and [thinkpad-t430](https://git.airies.net/vifair22/thinkpad-t430)
+the same for Gentoo with systemd, as a dracut module.
+
+![falcon jump's menu](docs/img/jump.png)
 
 ## Releases
 
-Each release on GitLab carries mkstick and the sign tool as static x86-64
-binaries with every unsigned loader they install
-(`falcon-boot-X.Y.Z-x86_64.tar.gz`, unpacked under `/usr` it needs no path
-options), the BIOS station bundle, the falcon jump floppy image, and their
-`SHA256SUMS`. It is also a package, `falcon-boot-bin`: in the `falcon`
-pacman repository on dl.airies.net, and in vifair-overlay. The Manual's
-Section 14 says how to check and install them.
+Each release, on the
+[releases page](https://git.airies.net/vifair22/falcon-boot/-/releases),
+carries mkstick and the sign tool as static binaries with every unsigned
+loader they install, one tarball per host architecture
+(`falcon-boot-X.Y.Z-x86_64.tar.gz`, `falcon-boot-X.Y.Z-aarch64.tar.gz`;
+unpacked under `/usr` they need no path options), the BIOS station bundle, the falcon jump floppy image, and their
+`SHA256SUMS`. It is also a package, `falcon-boot-bin`, in the `falcon`
+pacman repository on dl.airies.net. Manual Section 14 says how to check and
+install them.
 
 ## Building
 
@@ -106,23 +182,44 @@ Section 13. The corpus runs in the same container, through
 `tools/coverage/harness.sh` with no command, which is how the measurements
 in `docs/coverage.md` are made.
 
-The pipeline (`.gitlab-ci.yml`) runs on the binhost's `falcon` runner, each
-job in the same container: every merge request gets the tests (with JUnit
-reports), `make analyze`, the coverage gate and the build. A merge request
-into `master`, which is a release branch shipping, also runs every rig and
-the corpus under all six states, and fails if any scorecard cell that passes
-on `master` no longer does (`tools/coverage/scorecard-diff.py`).
+The pipeline (`.gitlab-ci.yml`) runs every merge request through the tests
+(with JUnit reports), `make analyze`, the coverage gate and the build. A
+merge request into `master`, which is a release branch shipping, also runs
+every rig and the corpus under all six states, and fails if any scorecard
+cell that passes on `master` no longer does
+(`tools/coverage/scorecard-diff.py`).
 
 `make install` copies `falcon-boot-mkstick` and `falcon-boot-sign` into
 `/usr/local/bin`, building them first; `PREFIX` and `DESTDIR` apply.
 `make uninstall` removes them.
 
-The personal OS this loader boots is a separate project:
-[archusb](https://git.airies.net/vifair22/archusb) holds the Arch install's
-build runbook, its configuration, and the OS-side half of the passphrase
-handoff (DESIGN Section 5.1) as a mkinitcpio hook.
-[thinkpad-t430](https://git.airies.net/vifair22/thinkpad-t430) holds the
-same half for an installed Gentoo with systemd, as a dracut module.
+`tools/mockup-shots.sh` redraws the screenshots above from
+`docs/tui-mockup.html`, the screens' agreed look.
+
+## Layout
+
+```
+apps/              the loaders: stick/, station/, esp-jump/, station-legacy/, jump/
+falcon-core/       firmware-free libraries every other component links:
+                   crypto, TPM, the exFAT, ext4, FAT, ISO9660 and UDF drivers,
+                   LUKS2, partition tables, the PE walker, boot predictions,
+                   media logic, WIM, the manifest, the screen layout
+falcon-efi/        the UEFI loader (x86-64 and AArch64 PE32+) and its QEMU/OVMF rigs
+falcon-bios/       the BIOS loader (three stages into 32-bit protected mode, i686),
+                   jump's drivers, and the SeaBIOS rigs
+falcon-cli/        host tools: falcon-boot-mkstick, falcon-boot-sign
+falcon-appliance/  the on-stick signing appliance: PID 1 and its image recipe
+falcon-hook/       the initrd program that maps an ISO for a Linux distro
+falcon-winjump/    the WinPE program that attaches a Windows ISO for Setup
+falcon-vdisk/      the WinPE virtual-CD driver for Windows older than 8
+docs/              DESIGN.md, Manual.md, coverage.md (the corpus scorecard),
+                   tui-mockup.html (the screens), img/ (the README's shots)
+tools/             the static-analysis gate, the processor-floor check,
+                   and coverage/, the harness that produces docs/coverage.md
+```
+
+Each component has `src/`, `tests/` and `tools/` as it needs them and a
+`build.mk` the root Makefile includes; it is one build, not nine.
 
 ## Licence
 
