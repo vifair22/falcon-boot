@@ -3588,6 +3588,8 @@ to `build/ovmf-debug.log`:
 | `VARS_FILE` | the writable copy, `build/OVMF_VARS.fd` or `build/OVMF_VARS.secboot.fd`; it is made only when absent, so set a new one whenever `MOK_VARS` changes |
 | `QEMU_MEM` | `512` (MiB) |
 | `OVMF_DIR` | searched: `/usr/share/edk2/OvmfX64`, `/usr/share/edk2/x64`, `/usr/share/edk2-ovmf`, `/usr/share/edk2-ovmf/x64`, `/usr/share/OVMF`, `/usr/share/edk2` |
+| `AAVMF_DIR` | searched: `/usr/share/AAVMF`, `/usr/share/edk2/aarch64`, `/usr/share/edk2/ArmVirtQemu-AARCH64` |
+| `VARS_FILE` with `--aa64` | `build/AAVMF_VARS.fd`, or `.qcow2` where the firmware is qcow2 |
 
 A BIOS rig disk is passed as a drive:
 

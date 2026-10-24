@@ -54,3 +54,48 @@ ovmf_find() {   # ovmf_find <CODE|VARS> <plain|secboot> -> path, or empty
 ovmf_vars_have_pk() {   # ovmf_vars_have_pk <virt-fw-vars> <varstore>
     "$1" --input "$2" --print 2>/dev/null | grep -qiE '^[[:space:]]*-?[[:space:]]*PK\b'
 }
+
+# The same for AAVMF, edk2's AArch64 virt firmware, for the --aa64 rigs.
+#
+#   Debian   /usr/share/AAVMF/  AAVMF_CODE.fd, AAVMF_CODE.secboot.fd,
+#            AAVMF_VARS.fd (blank), AAVMF_VARS.ms.fd (Microsoft's keys)
+#   Fedora   /usr/share/edk2/aarch64/  QEMU_EFI-pflash.raw,
+#            vars-template-pflash.raw
+#   Gentoo   /usr/share/edk2/ArmVirtQemu-AARCH64/  QEMU_EFI.qcow2,
+#            QEMU_EFI.secboot_INSECURE.qcow2, QEMU_VARS.qcow2
+#
+# AAVMF_DIR wins when set. Debian's secboot VARS is the one with keys
+# enrolled; the others need mk-test-mok.sh's --enroll-microsoft, like Arch's
+# OVMF.
+aavmf_find() {   # aavmf_find <CODE|VARS> <plain|secboot> -> path, or empty
+    local what=$1 mode=$2 d f
+    local dirs=("${AAVMF_DIR:-}" /usr/share/AAVMF /usr/share/edk2/aarch64 \
+                /usr/share/edk2/ArmVirtQemu-AARCH64)
+    local names=()
+
+    if [ "$what" = CODE ]; then
+        if [ "$mode" = secboot ]; then
+            names=(AAVMF_CODE.secboot.fd QEMU_EFI.secboot_INSECURE.qcow2)
+        else
+            names=(AAVMF_CODE.fd QEMU_EFI-pflash.raw QEMU_EFI.qcow2)
+        fi
+    else
+        if [ "$mode" = secboot ]; then
+            names=(AAVMF_VARS.ms.fd QEMU_VARS.secboot_INSECURE.qcow2)
+        else
+            names=(AAVMF_VARS.fd vars-template-pflash.raw QEMU_VARS.qcow2)
+        fi
+    fi
+    for d in "${dirs[@]}"; do
+        [ -n "$d" ] && [ -d "$d" ] || continue
+        for f in "${names[@]}"; do
+            [ -f "$d/$f" ] && { printf '%s' "$d/$f"; return 0; }
+        done
+    done
+    return 1
+}
+
+# The -drive format a firmware file is in: Gentoo ships qcow2.
+fw_format() {   # fw_format <path> -> raw|qcow2
+    case "$1" in *.qcow2) printf qcow2 ;; *) printf raw ;; esac
+}
