@@ -43,6 +43,9 @@
 #define STAGING_SHORT L"this machine has too little memory below 4 GB to "
 #endif
 
+/* An ISO9660 sector: the memory-disk window starts on one. */
+#define ISO_SECTOR_BYTES 2048u
+
 static fs_file g_iso;
 static fs_vol  g_isovol;
 static fs_dir  g_dir;
@@ -92,6 +95,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     bsdmd_record_edit rec;
+    uint64_t window;
     char path[BSDMD_PATH_MAX];
     char head[CONF_HEAD];
     char *cfg = (char *)0;
@@ -141,7 +145,13 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     /* The record naming the medium as a file inside itself. */
     result->stage = L"placing the memory-disk record";
     tui_step(L"placing the memory-disk record");
-    if (bsdmd_record(file->size, iso_read, (void *)0, &rec, path,
+    /* The file's bytes are a window past the medium's end serving the
+     * medium again, not sector 0 (bsdmd.h): AArch64's firmware maps no page
+     * at address 0, and the false hit there faults FreeBSD's loader. */
+    window = (file->size + ISO_SECTOR_BYTES - 1u) / ISO_SECTOR_BYTES *
+             ISO_SECTOR_BYTES;
+    if (bsdmd_record(file->size, (uint32_t)(window / ISO_SECTOR_BYTES),
+                     iso_read, (void *)0, &rec, path,
                      sizeof path) != BSDMD_OK) {
         result->advice = L"this ISO has no free bytes in its root or /boot "
                          L"directory for the record this route adds.";
@@ -187,7 +197,14 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     ovl.ovl[1].iso_off = conf_ext.vol_off;
     ovl.ovl[1].len = cfg_len;
     ovl.ovl[1].mem = (const UINT8 *)cfg;
-    ovl.n = 2;
+    ovl.ovl[2].iso_off = window;
+    ovl.ovl[2].len = file->size;
+    ovl.ovl[2].src = &g_iso;
+    ovl.ovl[2].src_off = 0;
+    ovl.n = 3;
+    ovl.extra = window - file->size +
+                (file->size + ISO_SECTOR_BYTES - 1u) / ISO_SECTOR_BYTES *
+                    ISO_SECTOR_BYTES;
 
     /* Not "starting": the ISO's loader reads the whole medium out of the
      * virtual CD after this line, and the coverage harness counts media read
