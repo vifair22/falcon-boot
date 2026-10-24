@@ -1415,8 +1415,9 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
     the file on p2. In scope for the menu and for blessing. **Blessing these
     modifies the user's file, and the tool says so before it does**: signing
     a PE appends a certificate, and there is nothing beside the payload to put
-    it in. A `.efi` is signed in place; for a `.img` the payload inside its
-    filesystem is. The review that authorises it names the file and says it
+    it in. A `.efi` is signed in place; for a `.img` the payloads inside its
+    filesystems are, `\EFI\BOOT\BOOTX64.EFI` and `BOOTAA64.EFI` wherever
+    either is (MemTest86 carries both). The review that authorises it names the file and says it
     will be written to.
 - **Secure Boot ON, validation off (user opt-in, 7.4):** shim permits
   everything; every ISO boots with nothing signed, on that machine, with

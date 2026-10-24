@@ -881,8 +881,9 @@ usage and the known families with the cmdline template of each, or
 | `--verbose`, `--quiet` | more or less diagnostic output |
 
 A `.efi` or `.img` takes only `--key`, `--cert` and `--dry-run`, and is
-signed in place. A `.img` is loop-mounted to reach its payload, which needs
-root. One already signed with this key is left as it is:
+signed in place. A `.img` is loop-mounted to reach its payloads, which
+needs root; `\EFI\BOOT\BOOTX64.EFI` and `BOOTAA64.EFI` are signed on each
+of its filesystems that has them. One already signed with this key is left as it is:
 
     already signed with this key, left alone: <path>
 
