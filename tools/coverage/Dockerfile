@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 \
         libcmocka-dev \
         qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools imagemagick \
+        qemu-system-arm qemu-efi-aarch64 xz-utils \
         tcpdump \
         python3-venv python3-dev libcrypt-dev \
         gdisk util-linux fdisk \
@@ -79,6 +80,26 @@ RUN python3 -m venv /opt/virt-firmware \
         "virt-firmware==${VIRT_FIRMWARE_VERSION}" \
     && ln -sf /opt/virt-firmware/bin/virt-fw-vars /usr/local/bin/virt-fw-vars
 
+# llvm-mingw for the AArch64 UEFI images and the ARM64 winjump. Debian has
+# no aarch64-w64-mingw32 toolchain, and plain clang with lld cannot build
+# winjump, which needs a mingw CRT. A pinned upstream release, checked
+# against the digest its release page publishes; the x64 images stay on
+# Debian's gcc-mingw. xz-utils above unpacks it.
+ARG LLVM_MINGW_VERSION=20261020
+ARG LLVM_MINGW_SHA256=55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335
+RUN set -eu; \
+    t=llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64; \
+    curl -fsSL -o /tmp/$t.tar.xz \
+        https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/$t.tar.xz; \
+    echo "${LLVM_MINGW_SHA256}  /tmp/$t.tar.xz" | sha256sum -c -; \
+    tar -xJf /tmp/$t.tar.xz -C /opt; \
+    mv /opt/$t /opt/llvm-mingw; \
+    rm /tmp/$t.tar.xz
+# Last on PATH: llvm-mingw also installs x86_64- and i686-w64-mingw32-gcc,
+# clang wrappers that would otherwise take the x64 and BIOS-side builds off
+# Debian's gcc-mingw.
+ENV PATH=$PATH:/opt/llvm-mingw/bin
+
 # Fail the build rather than the first corpus run.
 #
 # REGENERATE THIS LIST, DO NOT EXTEND IT FROM MEMORY. A hand-extended list
@@ -109,7 +130,11 @@ RUN python3 -m venv /opt/virt-firmware \
 #               `falcon_hook_bin`, four steps and several minutes later.
 RUN set -eu; \
     missing=0; \
-    for t in x86_64-w64-mingw32-gcc qemu-system-x86_64 sgdisk losetup blkid \
+    case "$(command -v x86_64-w64-mingw32-gcc)" in /usr/bin/*) ;; \
+        *) echo "MISSING: x86_64-w64-mingw32-gcc is not Debian's gcc-mingw"; \
+           missing=1 ;; esac; \
+    for t in x86_64-w64-mingw32-gcc aarch64-w64-mingw32-clang \
+             qemu-system-x86_64 qemu-system-aarch64 sgdisk losetup blkid \
              openssl cryptsetup sbsign sbverify mkfs.fat mkfs.exfat \
              mkfs.ext4 mkudffs mformat bsdtar ukify wimlib-imagex xorriso \
              cpio zstd socat aria2c readelf sha256sum virt-fw-vars 7z sudo \
@@ -123,6 +148,8 @@ RUN set -eu; \
     test -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub || { \
         echo "MISSING: sd-stub; every blessed stick would fail to build"; \
         missing=1; }; \
+    test -f /usr/share/AAVMF/AAVMF_CODE.fd || { \
+        echo "MISSING: AAVMF; the AArch64 rigs have no firmware"; missing=1; }; \
     for f in --enroll-microsoft --secure-boot --add-mok --set-pk; do \
         virt-fw-vars --help 2>&1 | grep -q -- "$f" || { \
             echo "MISSING: virt-fw-vars has no $f"; missing=1; }; \

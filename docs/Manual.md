@@ -3383,6 +3383,7 @@ the harness's Dockerfile and this table to it):
 | tool | Debian package | group | needed for |
 |---|---|---|---|
 | `x86_64-w64-mingw32-gcc` (required) | gcc-mingw-w64-x86-64 | build | the UEFI images, winjump.exe and the x64 vdisk driver (or build in the harness image) |
+| `aarch64-w64-mingw32-clang` | llvm-mingw (release) | build | the AArch64 UEFI images and the ARM64 winjump: llvm-mingw 20261020, ucrt, after gcc-mingw on PATH (its x86_64- and i686- wrappers are clang) (or build in the harness image) |
 | `gcc` (required) | build-essential | build | host tools, tests and the BIOS loader (CC_HOST) |
 | `make` (required) | make | build | the one build |
 | `pkg-config` (required) | pkg-config | build | finds cmocka for the test binaries |
@@ -3419,6 +3420,9 @@ the harness's Dockerfile and this table to it):
 | `objdump, readelf` | binutils | analyzers | tools/check-floor.sh |
 | `qemu-system-x86_64` | qemu-system-x86 | rigs | the UEFI rigs |
 | `qemu-system-i386` | qemu-system-x86 | rigs | the BIOS rigs (SeaBIOS on an i686) |
+| `qemu-system-aarch64` | qemu-system-arm | rigs | the AArch64 UEFI rigs (TCG on an x86 host) |
+| `AAVMF` | qemu-efi-aarch64 | rigs | the AArch64 rigs' firmware, plain and Secure Boot |
+| `xz` | xz-utils | harness | unpacks the llvm-mingw release into the harness image |
 | `qemu-img, qemu-nbd` | qemu-utils | rigs | rig disks, overlays and the station fixture disks |
 | `OVMF` | ovmf | rigs | the UEFI rigs' firmware, plain and Secure Boot |
 | `swtpm, swtpm_setup` | swtpm swtpm-tools | rigs | the TPM rigs |
@@ -3561,18 +3565,19 @@ flags. `tools/analyze.md` has the suppression policy.
 
 ### 13.4 QEMU rigs
 
-`falcon-efi/tools/run-qemu.sh` boots a loader under OVMF (or SeaBIOS) with
-a window, serial mirrored to the terminal and OVMF's debug port to
-`build/ovmf-debug.log`:
+`falcon-efi/tools/run-qemu.sh` boots a loader under OVMF (or SeaBIOS, or
+AAVMF) with a window, serial mirrored to the terminal and OVMF's debug port
+to `build/ovmf-debug.log`:
 
-    falcon-efi/tools/run-qemu.sh [--secboot|--bios] [--stick] [--headless]
-                                 [qemu args...]
+    falcon-efi/tools/run-qemu.sh [--secboot|--bios] [--aa64] [--stick]
+                                 [--headless] [qemu args...]
 
 | option | effect |
 |---|---|
 | none | `build/bin/falcon-boot.efi` as `\EFI\BOOT\BOOTX64.EFI` on a vvfat ESP (`build/esp`), plus `build/test-exfat.img` when it exists |
 | `--secboot` | Secure Boot OVMF: Fedora's shim 16.1 as the default loader, the signed loader as `grubx64.efi`, and the varstore `MOK_VARS`; needs `make sign` |
 | `--bios` | SeaBIOS on i440fx: no varstore, and only the drives given after the options (and the stick with `--stick`); not with `--secboot` |
+| `--aa64` | the AArch64 loader, `build/bin/falcon-boot-aa64.efi` as `BOOTAA64.EFI` (`build/esp-aa64`), on `qemu-system-aarch64`'s virt machine under AAVMF, with a USB keyboard and ramfb; TCG on an x86-64 host, so slow; the firmware's log is on the serial console; not with `--bios` |
 | `--stick` | boot `build/test-stick.img` alone (`STICK_IMG` overrides) |
 | `--headless` | no window; serial to `build/serial.log` (`SERIAL_LOG`), the QEMU monitor on `build/mon.sock` (`MON_SOCK`) |
 
