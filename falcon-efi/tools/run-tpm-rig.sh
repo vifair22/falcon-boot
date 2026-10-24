@@ -603,9 +603,15 @@ case_totp() {
         boot "$fw" "$tpm" "$R/totp.img"
         wait_for "TOTP: " 90 || why="the prompt boot showed no code"
         for _ in 1 2 3 4 5 6 7 8; do mon "sendkey up"; done
+        # A burst of keys to an emulated USB keyboard can lose one: Enter
+        # again if the first did not open the prompt.
+        sleep 1
         mon "sendkey ret"
-        [[ -z $why ]] && { wait_for "passphrase for the encrypted partition" 30 ||
-            why="no passphrase prompt"; }
+        if [[ -z $why ]] && ! wait_for "passphrase for the encrypted partition" 15; then
+            mon "sendkey ret"
+            wait_for "passphrase for the encrypted partition" 30 ||
+                why="no passphrase prompt"
+        fi
         # Past a 30-second step at the prompt: the code is redrawn in place.
         # An emulated guest's clock runs behind the host's, so SCALE steps.
         [[ -z $why ]] && sleep $(( 32 * SCALE ))

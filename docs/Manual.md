@@ -881,8 +881,9 @@ usage and the known families with the cmdline template of each, or
 | `--verbose`, `--quiet` | more or less diagnostic output |
 
 A `.efi` or `.img` takes only `--key`, `--cert` and `--dry-run`, and is
-signed in place. A `.img` is loop-mounted to reach its payload, which needs
-root. One already signed with this key is left as it is:
+signed in place. A `.img` is loop-mounted to reach its payloads, which
+needs root; `\EFI\BOOT\BOOTX64.EFI` and `BOOTAA64.EFI` are signed on each
+of its filesystems that has them. One already signed with this key is left as it is:
 
     already signed with this key, left alone: <path>
 
@@ -3053,7 +3054,7 @@ below.
 | `opening the ISO`, `reading the ISO's filesystem` | - | Copy the ISO again. |
 | `locating the ISO's loader.conf` | - | Press `c`. |
 | `placing the memory-disk record` | `this ISO has no free bytes in its root or /boot directory for the record this route adds.` | Press `c`. |
-| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` | As it says. |
+| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` (on AArch64: `too little free memory in one run`) | As it says. |
 | `writing the loader settings` | `this ISO's loader.conf has no comment block long enough to hold the memory-disk settings.` | Press `c`. |
 
 The medium is then served as the CHN route serves it, and its later stages
@@ -3209,7 +3210,7 @@ The kernel lines, shared by DIR, POS and MEM, each ending in `.`:
 | `unlocking the encrypted partition` | `the passphrase did not open any keyslot.`, `the partition could not be read.`, `this keyslot needs <n> MiB of memory; this machine has <m> MiB free.`, `the volume is outside what this loader supports.` | As on UEFI, above. |
 | `opening the decrypted volume` | - | Report it. |
 | `mounting the filesystem inside it` | `the decrypted volume is not a filesystem this loader can read.`, or one of the three journal lines given for UEFI | As on UEFI. |
-| `looking for a UKI` | `no *.efi image was found in /uki or /EFI/Linux.` | Put a UKI in `/uki`. |
+| `looking for a UKI` | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | Put a UKI in `/uki`. |
 | `looking for a UKI` | `the image this entry names is not on the shelf.` | Fix the marker or STATION.INI's `uki`. |
 | `reading the UKI` | `the image is not a PE file, so it is not a UKI.` / `the image has no .linux section, so it is not a UKI.` | Replace the file. |
 | `starting the kernel` | one of the kernel lines (BIOS: DIR) | See there. |
@@ -3755,7 +3756,7 @@ result is skipped unless `--force`. Its options:
 
 | option | default |
 |---|---|
-| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios` and `bios32` are asked for by name |
+| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios`, `bios32` and the AArch64 columns `a64-off a64-ms a64-own` (virt under AAVMF, emulated, each wait `FALCON_CASE_A64_SCALE` (4) times as long) are asked for by name |
 | `--routes "..."` | `dnd chain blessed` |
 | `--jobs N` | 3, each case taking `FALCON_CASE_MEM` (4 GiB) |
 | `--timeout S` | 300 seconds from the keypress to a verdict |
@@ -3767,6 +3768,12 @@ The corpus is `tools/coverage/corpus.tsv`, fetched and checked against its
 pinned SHA-256s with:
 
     tools/coverage/corpus-fetch.sh [--local DIR]... [ID...]
+
+Its arm64 rows run in the a64 columns alone. Two have no download to
+fetch: `efi-shell-aa64-2025.02` is built, in the harness, by
+`tools/coverage/mk-shell-iso.sh` (Debian's EDK II shell in an El Torito
+image), and `memtest86-11-arm64` is `memtest86-usb.img` out of PassMark's
+`memtest86-usb.zip`.
 
 ### 13.6 Shim binaries
 

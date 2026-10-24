@@ -1415,8 +1415,9 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
     the file on p2. In scope for the menu and for blessing. **Blessing these
     modifies the user's file, and the tool says so before it does**: signing
     a PE appends a certificate, and there is nothing beside the payload to put
-    it in. A `.efi` is signed in place; for a `.img` the payload inside its
-    filesystem is. The review that authorises it names the file and says it
+    it in. A `.efi` is signed in place; for a `.img` the payloads inside its
+    filesystems are, `\EFI\BOOT\BOOTX64.EFI` and `BOOTAA64.EFI` wherever
+    either is (MemTest86 carries both). The review that authorises it names the file and says it
     will be written to.
 - **Secure Boot ON, validation off (user opt-in, 7.4):** shim permits
   everything; every ISO boots with nothing signed, on that machine, with
@@ -2310,6 +2311,13 @@ an unverified kernel off the medium (7.7); memtest86+ reads nothing. Embedding t
 costs p2 space (~100-250 MB per blessed ISO) and makes the entire blessed
 boot chain signed, which closes the unsigned-initrd residual of Section 7.5
 for blessed media.
+A kernel that is itself a stub image (Fedora's arm64 kernel: sd-stub, the
+kernel as its `.linux`, and the devicetrees it picks among) is unwrapped:
+its `.linux` is the wrap's kernel and its `.dtb`, `.dtbauto`, `.hwids` and
+`.uname` come along. Wrapped whole, its own stub would ask shim to verify
+the kernel inside, which nothing signed. A merged `.sbat` longer than the
+stub's section becomes a `.sbat` of its own and the stub's is renamed
+`.sbat.st`.
 `--no-initrd` produces the kernel+cmdline-only wrap for space-constrained
 sticks, reopening that residual for this medium. The loader does not
 deliver the ISO's initrd from p2 to a thin wrap.

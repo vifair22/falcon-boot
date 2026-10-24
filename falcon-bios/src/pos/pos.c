@@ -696,7 +696,10 @@ int pos_list(bios_disk *d, const part_entry *shelf, pos_list_fn fn,
 
     if (!pos_probe(d, shelf) || !g_plain)
         return -1;
-    if (shelf_collect(&g_images, &g_fs) != 1) {
+    /* An AArch64 image on the same shelf is the other machine's
+     * (media/shelf.c, shelf_keep_machine). */
+    if (shelf_collect(&g_images, &g_fs) != 1 ||
+        shelf_keep_machine(&g_images, &g_fs, PE_MACHINE_AMD64) == 0) {
         shelf_wipe(&g_images);
         return 0;
     }
@@ -727,8 +730,10 @@ int pos_run_pick(bios_disk *d, const part_entry *shelf, pos_pick_fn want,
     }
 
     boot_stage(r, "looking for a UKI");
-    if (shelf_collect(&g_images, &g_fs) != 1) {
-        r->advice = "no *.efi image was found in /uki or /EFI/Linux.";
+    if (shelf_collect(&g_images, &g_fs) != 1 ||
+        shelf_keep_machine(&g_images, &g_fs, PE_MACHINE_AMD64) == 0) {
+        r->advice = "no *.efi image for this machine was found in /uki or "
+                    "/EFI/Linux.";
         wipe_secrets();
         return -1;
     }
