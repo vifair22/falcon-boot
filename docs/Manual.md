@@ -2602,6 +2602,7 @@ The test rig's options for these (`--tpm-socket`, `--event-log`,
 
 | option | default | what it does |
 |---|---|---|
+| `--arch` | this machine's | the machine the station boots, `x64` or `aa64` (10.6); every totp command takes it |
 | `--pcrs` | `0,2,4,7` | the PCRs to seal to, 0 to 15 |
 | `--owner-auth-file` | none on a TPM 2.0, the well-known secret on 1.2 | the TPM owner's authorisation: the file's bytes, a trailing newline dropped; on 1.2 exactly 20 bytes is the secret itself, anything else a passphrase whose SHA-1 it is |
 | `--label` | this host's name | the authenticator's account name |
