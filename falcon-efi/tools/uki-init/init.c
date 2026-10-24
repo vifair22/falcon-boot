@@ -313,6 +313,21 @@ static void bli_report(void)
     }
 }
 
+/* What describes this machine to the kernel: a devicetree (U-Boot, many
+ * boards) or ACPI (OVMF, AAVMF, PCs). The firmware's choice reaches the
+ * kernel through the EFI configuration table with nothing in between, so the
+ * rig checks that it arrived. Read after bli_report mounted sysfs. */
+static void firmware_report(void)
+{
+    struct stat st;
+    int dt = stat("/sys/firmware/devicetree/base", &st) == 0;
+    int acpi = stat("/sys/firmware/acpi/tables", &st) == 0;
+
+    outf("FALCON-UKI-FIRMWARE %s\n",
+         dt && !acpi ? "devicetree" : acpi && !dt ? "acpi" :
+         dt ? "devicetree+acpi" : "neither");
+}
+
 /* The processors the kernel brought up, as sysfs lists them ("0-3"). A
  * loader that started the others for its keyslots (falcon-efi/src/mp,
  * falcon-bios/src/mp) has to hand them back where the kernel can start
@@ -393,6 +408,7 @@ int main(void)
 
     bli_report();
     cpus_report();
+    firmware_report();
 
     outf("FALCON-UKI-DONE\n");
     /* A human watching the QEMU window needs a moment to read the result;

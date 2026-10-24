@@ -3446,6 +3446,7 @@ the harness's Dockerfile and this table to it):
 | `qemu-system-i386` | qemu-system-x86 | rigs | the BIOS rigs (SeaBIOS on an i686) |
 | `qemu-system-aarch64` | qemu-system-arm | rigs | the AArch64 UEFI rigs (TCG on an x86 host) |
 | `AAVMF` | qemu-efi-aarch64 | rigs | the AArch64 rigs' firmware, plain and Secure Boot |
+| `U-Boot` | u-boot-qemu | rigs | the devicetree rig: U-Boot's UEFI on virt |
 | `xz` | xz-utils | harness | unpacks the llvm-mingw release into the harness image |
 | `qemu-img, qemu-nbd` | qemu-utils | rigs | rig disks, overlays and the station fixture disks |
 | `OVMF` | ovmf | rigs | the UEFI rigs' firmware, plain and Secure Boot |
@@ -3601,6 +3602,7 @@ to `build/ovmf-debug.log`:
 | `--secboot` | Secure Boot OVMF: Fedora's shim 16.1 as the default loader, the signed loader as `grubx64.efi`, and the varstore `MOK_VARS`; needs `make sign` |
 | `--bios` | SeaBIOS on i440fx: no varstore, and only the drives given after the options (and the stick with `--stick`); not with `--secboot` |
 | `--aa64` | the AArch64 loader, `build/bin/falcon-boot-aa64.efi` as `BOOTAA64.EFI` (`build/esp-aa64`), on `qemu-system-aarch64`'s virt machine under AAVMF, with a USB keyboard and ramfb; TCG on an x86-64 host, so slow; the firmware's log is on the serial console; not with `--bios` |
+| `--uboot` | `--aa64` under U-Boot's UEFI instead of AAVMF (`UBOOT_BIN`, default Debian's `/usr/lib/u-boot/qemu_arm64/u-boot.bin`): a devicetree machine, no pflash, no Secure Boot; not with `--secboot` |
 | `--stick` | boot `build/test-stick.img` alone (`STICK_IMG` overrides) |
 | `--headless` | no window; serial to `build/serial.log` (`SERIAL_LOG`), the QEMU monitor on `build/mon.sock` (`MON_SOCK`) |
 
