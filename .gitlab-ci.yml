@@ -294,6 +294,11 @@ corpus:
   script:
     - *shims
     - mkdir -p "$FALCON_BUILD_DIR/mok-test" && cp -a "$FALCON_STICKS_MOK/." "$FALCON_BUILD_DIR/mok-test/"
+    # The key is the cache's, since the case sticks are signed with it; the
+    # varstores are made again every run, so a cache older than the script
+    # (the AArch64 ones before they trusted the 2023 CA shimaa64 is signed
+    # by) cannot leave a state behind.
+    - tools/coverage/harness.sh falcon-efi/tools/mk-test-mok.sh
     # Every state, the AArch64 ones too: emulated and slow, but this gate is
     # where a release shows its arm64 media still boot.
     - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32 a64-off a64-ms a64-own" | tee corpus.log
