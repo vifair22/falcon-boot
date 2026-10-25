@@ -168,8 +168,8 @@ unique within each such set, so `#include <fs/exfat.h>` means one file, and
   under `/srv/build/work/falcon/ci`). A pipeline that builds a harness image
   pushes it to the project's registry. Merge requests get test, analyze,
   coverage and build; a merge request into master adds the rigs and the
-  corpus, gated by `tools/coverage/scorecard-diff.py` against master's
-  scorecard. The runner itself is gitlab-infra's.
+  corpus in every state, the AArch64 ones included, gated by
+  `tools/coverage/scorecard-diff.py` against master's scorecard. The runner itself is gitlab-infra's.
 - `make release` (`release.mk`, in the harness, with `MEMTEST=` and
   `MEMTEST_EFI=`) writes the release to `build/release/`: a mkstick built
   with `FALCON_DATADIR=/usr/lib/falcon-boot` (`falcon-cli/src/common/
