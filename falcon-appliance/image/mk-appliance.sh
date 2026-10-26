@@ -253,6 +253,9 @@ echo "   init: $(stat -c%s "$ROOT/init") bytes (static)"
 echo "== staging binaries and their library closure"
 mkdir -p "$ROOT/usr/bin" "$ROOT/usr/sbin" "$ROOT/bin" "$ROOT/sbin"
 
+# Every file staged from this machine's packages, for the sources record.
+STAGED=()
+
 copy_to_root() {
     # $1 absolute path in the image; staged from $2, or from the same path
     # here, because that is what the dynamic loader and every shebang expect.
@@ -260,6 +263,7 @@ copy_to_root() {
 
     mkdir -p "$(dirname "$dst")"
     cp -L "$src" "$dst"
+    STAGED+=("$src")
 }
 
 # The arm64 libraries, where Debian's multiarch puts them; the arm64 dynamic
@@ -413,6 +417,39 @@ while IFS= read -r -d '' f; do
 done < <(find "$ROOT/init" "$ROOT"/{bin,sbin,usr/bin,usr/sbin} \
               \( -type f -perm -u+x -o -type l \) -print0)
 [[ $bad -eq 0 ]] || exit 1
+
+# ---- what it carries that falcon-boot did not build ----
+#
+# The UKI ships in the release (tools/release/THIRD-PARTY.md), so beside it
+# goes where each part's source is: Fedora's kernel build, and the Debian
+# package of every file staged from this machine with its source version.
+SOURCES="$OUT/appliance-uki$SUFFIX.sources"
+deb_of() {      # deb_of PATH: "package:arch version source"
+    local f p
+    if [[ -n "$TOOLS_ROOT" && "$1" == "$TOOLS_ROOT"/* ]]; then
+        # Unpacked from sbsigntool's arm64 .deb, the release the x86-64
+        # one is (tools/coverage/Dockerfile).
+        printf 'sbsigntool:arm64 %s\n' \
+            "$(dpkg-query -W -f='${source:Version} ${source:Package}' sbsigntool)"
+        return
+    fi
+    f=$(readlink -f "$1")
+    # "package[:arch]: /path"; a diversion line is not an owner.
+    p=$(dpkg -S "$f" 2>/dev/null | grep -v '^diversion' | head -1 | sed 's/: .*//')
+    [[ -n "$p" ]] || { echo "ERROR: $f belongs to no package" >&2; exit 1; }
+    printf '%s %s\n' "$p" "$(dpkg-query -W -f='${source:Version} ${source:Package}' "$p")"
+}
+KREL=${KVER%.*}
+{
+    echo "# appliance-uki$SUFFIX.efi: what it carries that falcon-boot did not build."
+    echo "kernel Fedora kernel-core and kernel-modules-core $KREL ($FARCH):" \
+         "https://kojipkgs.fedoraproject.org/packages/kernel/${KREL%-*}/${KREL#*-}/src/"
+    for f in "${STAGED[@]}"; do deb_of "$f"; done | sort -u |
+        while read -r pkg ver src; do
+            echo "deb $pkg, source $src $ver: https://sources.debian.org/src/$src/"
+        done
+} > "$SOURCES"
+echo "   sources: $SOURCES"
 
 echo "== packing the initramfs"
 ( cd "$ROOT" && find . -mindepth 1 -printf '%P\n' | LC_ALL=C sort |
