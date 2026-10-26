@@ -143,6 +143,13 @@
 #                  as uefi-stick, the personal OS off its shelf
 #   no-p3-uefi     a stick `mkstick create --no-p3` made (p1 and p2): no
 #                  Personal OS row, and payload-test.iso boots off its library
+#   interactive-uefi, interactive-bios
+#                  a stick `mkstick create` made with no target, its
+#                  questions answered on stdin (the loop device offered as a
+#                  drive from a sysfs tree of the rig's own; no AArch64
+#                  loader, the BIOS loader, a UKI, p1, p3 and p2 sized):
+#                  the command line it printed is the one expected, and the
+#                  stick is judged as uefi-stick
 #   fs-p3-xfs-dirty-uefi, fs-p3-xfs-dirty-bios
 #                  that stick with its UKI renamed to resumed.efi, fsynced,
 #                  and the filesystem shut down with nothing written back:
@@ -343,10 +350,11 @@ build_sticks() {
 # --p3-fs` (and `mkstick bios`) the first time a case asks for it:
 # $R/stick-NAME.img, its library holding NAME.iso, its install ID in
 # $R/stick-NAME.id. 1 GiB, so p3 has the 320 MiB xfs asks for.
-fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3]
+fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3|interactive]
     local img=$R/stick-$1.img log=$R/stick-$1.build p2 shelf
     [[ -f "$img" && "${FS_BUILT[$1]:-}${KEEP:-0}" == *1* ]] && return 0
     case ${4:-} in
+    interactive) shelf=() ;;
     no-p3) shelf=(--no-p3 --key-out "$R/keys-$1") ;;
     no-p4) shelf=(--no-p4 --p3-size 320M --p3-fs "$3"
                   --passphrase-file "$R/pass" --uki build/test/fixture-uki.efi) ;;
@@ -354,14 +362,22 @@ fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3]
                   --passphrase-file "$R/pass" --uki build/test/fixture-uki.efi) ;;
     esac
     rm -f "$img"
+    # create refuses a --key-out holding another stick's key.
+    rm -rf "$R/keys-$1"
     truncate -s 1G "$img"
     ( umask 077; printf '%s' "$PASS" > "$R/pass" )
     attach "$img"
-    # shellcheck disable=SC2024  # the log is ours, not root's
-    sudo "$MKSTICK" --quiet create "$LOOP" --force \
-        --p1-size 300M --iso-size 128M --p2-fs "$2" "${shelf[@]}" \
-        --shim build/shim/bins --loader build/bin/falcon-boot.efi \
-        --cn "falcon-boot $1 rig" --no-appliance >"$log" 2>&1 || { rm -f "$R/pass"; detach; return 1; }
+    if [[ ${4:-} == interactive ]]; then
+        fs_stick_interactive "$1" "$2" "$3" "$log" ||
+            { rm -f "$R/pass"; detach; return 1; }
+    else
+        # shellcheck disable=SC2024  # the log is ours, not root's
+        sudo "$MKSTICK" --quiet create "$LOOP" --force \
+            --p1-size 300M --iso-size 128M --p2-fs "$2" "${shelf[@]}" \
+            --shim build/shim/bins --loader build/bin/falcon-boot.efi \
+            --cn "falcon-boot $1 rig" --no-appliance >"$log" 2>&1 ||
+            { rm -f "$R/pass"; detach; return 1; }
+    fi
     rm -f "$R/pass"
     p2=$(sudo "$MKSTICK" ident "$LOOP" | awk -F '\t' '$2 == "library" { print $1 }')
     [[ -n "$p2" ]] || { detach; return 1; }
@@ -369,7 +385,9 @@ fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3]
     dd if=/dev/zero of="$MNT/$1.iso" bs=1M count=1 status=none
     cp build/test-payload.iso "$MNT/payload-test.iso"
     umount_part
+    # The dialogue put the BIOS loader on already.
     # shellcheck disable=SC2024
+    [[ ${4:-} == interactive ]] ||
     sudo "$MKSTICK" --quiet bios --reserve --no-backup \
         --stage1 build/bin/falcon-bios-stage1.bin \
         --stage2 build/bin/falcon-bios-stage2.bin \
@@ -381,6 +399,36 @@ fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3]
     FS_BUILT[$1]=1
 }
 declare -A FS_BUILT=()
+
+# fs_stick's interactive layout: `mkstick create` with no target, the loop
+# device offered as sdt by a sysfs tree of the rig's own, every question
+# answered on stdin, and the command line it printed checked.
+fs_stick_interactive() {    # NAME P2_FS P3_FS LOG
+    local sys=$R/isys-$1 dev=$R/idev-$1 want
+    rm -rf "$sys" "$dev"
+    mkdir -p "$sys/block/sdt/device" "$dev"
+    echo $(( $(stat -c %s "$R/stick-$1.img") / 512 )) > "$sys/block/sdt/size"
+    echo 1 > "$sys/block/sdt/removable"
+    echo "falcon rig" > "$sys/block/sdt/device/model"
+    ln -s "$LOOP" "$dev/sdt"
+    # Drive, its name, a personal OS; no AArch64, BIOS; a new MOK; one
+    # UKI; p1, p2's and p3's filesystems and p3's size; p2's size; yes.
+    # shellcheck disable=SC2024  # the log is ours, not root's
+    printf '1\nsdt\n1\nn\ny\n\n%s\n\ny\n300M\n%s\n320M\n%s\n128M\ny\n' \
+        build/test/fixture-uki.efi "$2" "$3" |
+        sudo env FALCON_MKSTICK_SYS="$sys" FALCON_MKSTICK_DEV="$dev" \
+            "$MKSTICK" create --shim build/shim/bins \
+            --loader build/bin/falcon-boot.efi --cn "falcon-boot $1 rig" \
+            --no-appliance --passphrase-file "$R/pass" >"$4" 2>&1 || return 1
+    want="falcon-boot-mkstick create --force --p1-size 300M --iso-size 128M"
+    want+=" --p3-size 320M --no-aa64 --uki build/test/fixture-uki.efi"
+    want+=" --passphrase-file $R/pass --shim build/shim/bins"
+    want+=" --loader build/bin/falcon-boot.efi --no-appliance"
+    want+=" --cn 'falcon-boot $1 rig' $dev/sdt"
+    grep -qF -- "$want" "$4" || { echo "expected: $want" >>"$4"; return 1; }
+    grep -qF -- "falcon-boot-mkstick bios --no-backup $dev/sdt" "$4" ||
+        return 1
+}
 
 # fs_case CASE FIRMWARE NAME P2_FS P3_FS [LAYOUT]: stick_case on that stick.
 fs_case() {
@@ -1827,6 +1875,7 @@ CASES=("$@")
            fs-p2-fat-iso-uefi fs-p3-btrfs-uefi fs-p3-btrfs-bios
            fs-p3-xfs-uefi fs-p3-xfs-bios fs-p3-xfs-dirty-uefi
            fs-p3-xfs-dirty-bios no-p4-uefi no-p4-bios no-p3-uefi
+           interactive-uefi interactive-bios
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1891,6 +1940,8 @@ for c in "${CASES[@]}"; do
     no-p4-uefi|no-p4-bios)
         fs_case "$c" "${c##*-}" no-p4 exfat ext4 no-p4 ;;
     no-p3-uefi) fs_iso "$c" no-p3 exfat ext4 no-p3 ;;
+    interactive-uefi|interactive-bios)
+        fs_case "$c" "${c##*-}" interactive exfat ext4 interactive ;;
     fs-p3-xfs-dirty-uefi|fs-p3-xfs-dirty-bios)
         case_xfs_dirty "$c" "${c##*-}" ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
