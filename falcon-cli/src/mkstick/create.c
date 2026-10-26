@@ -63,6 +63,10 @@
 #define DEFAULT_SHIM_DIR   FALCON_DATADIR "/shim/bins"
 #define DEFAULT_LOADER     FALCON_DATADIR "/bin/falcon-boot.efi"
 #define DEFAULT_LOADER_AA64 FALCON_DATADIR "/bin/falcon-boot-aa64.efi"
+/* The signing appliance (DESIGN Section 7.5), unsigned, as the release
+ * ships it and `make appliance` builds it. */
+#define DEFAULT_APPLIANCE      FALCON_DATADIR "/appliance/appliance-uki.efi"
+#define DEFAULT_APPLIANCE_AA64 FALCON_DATADIR "/appliance/appliance-uki-aa64.efi"
 #define DEFAULT_STAGE3     FALCON_DATADIR "/bin/falcon-bios-stage3.bin"
 
 /* Every external tool this command needs, checked before the first byte is
@@ -96,6 +100,12 @@ static const cli_opt create_opts[] = {
       "the AArch64 falcon-boot-aa64.efi (default " DEFAULT_LOADER_AA64 ")" },
     { "uki", CLI_OPT_VALUE, 1, "<file>",
       "a UKI to sign with the MOK and stage on p3:/uki" },
+    { "appliance", CLI_OPT_VALUE, 0, "<file>",
+      "the signing appliance UKI for p3 (default " DEFAULT_APPLIANCE ")" },
+    { "appliance-aa64", CLI_OPT_VALUE, 0, "<file>",
+      "the AArch64 appliance (default " DEFAULT_APPLIANCE_AA64 ")" },
+    { "no-appliance", CLI_OPT_FLAG, 0, NULL,
+      "stage no signing appliance on p3" },
     { "cn", CLI_OPT_VALUE, 0, "<name>",
       "subject CN of the MOK certificate" },
     { "key", CLI_OPT_VALUE, 0, "<file>",
@@ -934,6 +944,7 @@ static cli_status install_esp(const mks_disk *d, const char *mnt,
 static cli_status install_shelf(const cli_args *a, const mks_disk *d,
                                 const char *mnt, const mks_pass *pass,
                                 const mok_keys *keys, const fs_plan *plan,
+                                const char *const *apps, size_t n_apps,
                                 const uint8_t id[IDENT_ID_LEN])
 {
     char mapper[64];
@@ -976,15 +987,17 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
     if (rc == CLI_OK)
         rc = util_mkdir_p(ukidir, 0755);
 
-    for (i = 0; i < n && rc == CLI_OK; i++) {
-        const char *src = cli_at(a, "uki", i);
+    /* The --uki images, then the appliances: one list, one rule. */
+    for (i = 0; i < n + n_apps && rc == CLI_OK; i++) {
+        const char *src = i < n ? cli_at(a, "uki", i) : apps[i - n];
 
         rc = util_join(dst, sizeof dst, ukidir, util_basename(src));
         if (rc != CLI_OK)
             break;
         if (util_is_file(dst)) {
             rc = set_error(CLI_ERR_EXISTS,
-                           "two --uki arguments have the basename %s",
+                           "two UKIs for p3 have the basename %s (an "
+                           "appliance belongs in --appliance, not --uki)",
                            util_basename(src));
             break;
         }
@@ -1069,6 +1082,82 @@ static cli_status install_iso_library(const mks_disk *d, const char *mnt,
 
 /* ---- the command ---- */
 
+/* The signing appliances p3 gets (DESIGN Section 7.5): by default each
+ * one there is, for the machines the stick boots; named, or refused. The
+ * appliance reads the private key off an encrypted p3, so a plaintext
+ * shelf gets none. */
+static cli_status choose_appliances(const cli_args *a, const fs_plan *plan,
+                                    size_t n_chains, const char **apps,
+                                    size_t *n_apps)
+{
+    static const struct {
+        const char *opt;
+        const char *dflt;
+        size_t chains;      /* staged by default when this many chains */
+    } want[2] = {
+        { "appliance", DEFAULT_APPLIANCE, 1 },
+        { "appliance-aa64", DEFAULT_APPLIANCE_AA64, 2 },
+    };
+    size_t i;
+
+    *n_apps = 0;
+    if (!plan->has_p3 || cli_flag(a, "no-appliance"))
+        return CLI_OK;
+    for (i = 0; i < 2; i++) {
+        const char *named = cli_value(a, want[i].opt, NULL);
+        const char *path = named != NULL ? named : want[i].dflt;
+
+        if (plan->p3_plain) {
+            if (named != NULL)
+                return set_error(CLI_ERR_USAGE, "--%s with --p3-plain: the "
+                                 "appliance reads the MOK private key off an "
+                                 "encrypted p3", want[i].opt);
+            continue;
+        }
+        if (named == NULL && n_chains < want[i].chains)
+            continue;
+        if (!util_is_file(path)) {
+            if (named != NULL)
+                return set_error(CLI_ERR_NOTFOUND, "no appliance at %s",
+                                 named);
+            log_warn("no signing appliance at %s: this stick blesses on a "
+                     "host alone (make %s, or --no-appliance)", path,
+                     i == 0 ? "appliance" : "appliance-aa64");
+            continue;
+        }
+        apps[(*n_apps)++] = path;
+    }
+    return CLI_OK;
+}
+
+/* p3 holds the LUKS2 header, then everything staged on it, and room for a
+ * filesystem's own metadata. */
+static cli_status shelf_fits(const cli_args *a, const layout *plan,
+                             const char *const *apps, size_t n_apps)
+{
+    uint64_t need = (uint64_t)24 << 20;
+    char have[32];
+    char want[32];
+    struct stat st;
+    size_t i;
+
+    for (i = 0; i < cli_count(a, "uki"); i++) {
+        if (stat(cli_at(a, "uki", i), &st) == 0)
+            need += (uint64_t)st.st_size;
+    }
+    for (i = 0; i < n_apps; i++) {
+        if (stat(apps[i], &st) == 0)
+            need += (uint64_t)st.st_size;
+    }
+    if (plan->size[2] >= need)
+        return CLI_OK;
+    return set_error(CLI_ERR_RANGE, "p3 (%s) cannot hold what goes on it "
+                     "(%s with its LUKS2 header); raise --p3-size, or pass "
+                     "--no-appliance",
+                     util_format_size(plan->size[2], have, sizeof have),
+                     util_format_size(need, want, sizeof want));
+}
+
 static cli_status create_run(const cli_args *a)
 {
     const char *target = a->pos[0];
@@ -1096,6 +1185,8 @@ static cli_status create_run(const cli_args *a)
     mks_pass pass;
     mok_keys keys;
     layout plan;
+    const char *apps[2];
+    size_t n_apps = 0;
     cli_status rc;
     size_t i;
 
@@ -1127,7 +1218,7 @@ static cli_status create_run(const cli_args *a)
     if (!plan_fs.has_p3) {
         static const char *const shelf_opts[] = {
             "no-p4", "p3-plain", "p3-fs", "p3-size", "p4-size", "uki",
-            "passphrase-file"
+            "passphrase-file", "appliance", "appliance-aa64"
         };
 
         for (i = 0; i < sizeof shelf_opts / sizeof shelf_opts[0]; i++) {
@@ -1290,6 +1381,15 @@ static cli_status create_run(const cli_args *a)
             return set_error(CLI_ERR_NOTFOUND, "no UKI at %s", u);
     }
 
+    rc = choose_appliances(a, &plan_fs, n_chains, apps, &n_apps);
+    if (rc != CLI_OK)
+        return rc;
+    if (plan_fs.has_p3) {
+        rc = shelf_fits(a, &plan, apps, n_apps);
+        if (rc != CLI_OK)
+            return rc;
+    }
+
     reserve = p1_reserved(stage3);
     if (reserve == 0u)
         return set_error(CLI_ERR_RANGE,
@@ -1374,8 +1474,8 @@ static cli_status create_run(const cli_args *a)
         goto out;
 
     if (plan_fs.has_p3) {
-        rc = install_shelf(a, &disk, mntdir, &pass, &keys, &plan_fs,
-                           install_id);
+        rc = install_shelf(a, &disk, mntdir, &pass, &keys, &plan_fs, apps,
+                           n_apps, install_id);
         if (rc != CLI_OK)
             goto out;
     }
@@ -1478,6 +1578,11 @@ const cli_cmd mks_cmd_create = {
     "personal-OS root, p2 taking the space. --no-p3 leaves out p3 and p4: a\n"
     "stick that boots media and nothing else, blessed from a host, so it\n"
     "needs --key-out for the MOK private key.\n"
+    "\n"
+    "The signing appliance (Section 7.5) goes on an encrypted p3 by default,\n"
+    "signed with the MOK: " DEFAULT_APPLIANCE ",\n"
+    "and the AArch64 one beside it on a stick with the AArch64 loader.\n"
+    "--no-appliance leaves them off.\n"
     "\n"
     "--p3-plain drops the LUKS layer on p3 (Section 3). The stick then has no\n"
     "on-stick private key and so no signing appliance, and the loader asks for\n"
