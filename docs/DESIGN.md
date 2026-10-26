@@ -2348,6 +2348,15 @@ creation:
   the stage 3 the build has, rounded up to a whole MiB and at least one,
   so a later, larger stage 3 installs without reformatting p1. `mkstick
   create` refuses a disk carrying any MBR or GPT table without `--force`.
+- `mkstick create` with no target asks instead: the drive, from a list
+  that puts removable disks first and refuses one this machine is using
+  (mounted, swapped on, or under a mapping) or boots from; the drive's
+  name typed back; the partitions; the AArch64 and BIOS loaders; the MOK;
+  the passphrase; the UKIs; filesystems and sizes. The answers are made
+  into `create`'s own arguments, printed in the summary, and parsed and
+  run as typed ones are, so every stick it makes has a command line. A
+  BIOS loader is `mkstick bios` run after; the first-boot enrollment is
+  printed at the end.
 - `mkstick bios` installs falcon-bios by the layout of Section 3.3, finding
   the boot partition by its record as stage 2 does, backing up exactly the
   sectors it writes and restoring them on `--remove`. `mkstick status`
