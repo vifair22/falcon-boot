@@ -702,7 +702,12 @@ static cli_status status_run(const cli_args *a)
         }
     }
     check(&t, roles[IDENT_ROLE_LIBRARY] >= 1, "an ISO library (role library)");
-    check(&t, roles[IDENT_ROLE_SHELF] >= 1, "a UKI shelf (role shelf)");
+    /* A stick made --no-p3 has no shelf, and boots media alone. */
+    if (roles[IDENT_ROLE_SHELF] >= 1)
+        check(&t, 1, "a UKI shelf (role shelf)");
+    else
+        note(&t, "no UKI shelf: no personal OS and no signing appliance "
+                 "(mkstick create --no-p3)");
     if (roles[IDENT_ROLE_BOOT] > 1 || roles[IDENT_ROLE_LIBRARY] > 1 ||
         roles[IDENT_ROLE_SHELF] > 1)
         note(&t, "a role appears on more than one partition; the loaders "
