@@ -44,7 +44,9 @@
 #include <common/util.h>
 #include <mkstick/bioscore.h>
 #include <mkstick/cleanup.h>
+#include <mkstick/createui.h>
 #include <mkstick/disk.h>
+#include <mkstick/drives.h>
 #include <mkstick/keys.h>
 #include <mkstick/pass.h>
 #include <mkstick/records.h>
@@ -98,6 +100,8 @@ static const cli_opt create_opts[] = {
       "the falcon-boot.efi to sign and install" },
     { "loader-aa64", CLI_OPT_VALUE, 0, "<file>",
       "the AArch64 falcon-boot-aa64.efi (default " DEFAULT_LOADER_AA64 ")" },
+    { "no-aa64", CLI_OPT_FLAG, 0, NULL,
+      "no AArch64 loader: the stick boots x86-64 machines only" },
     { "uki", CLI_OPT_VALUE, 1, "<file>",
       "a UKI to sign with the MOK and stage on p3:/uki" },
     { "appliance", CLI_OPT_VALUE, 0, "<file>",
@@ -1158,7 +1162,9 @@ static cli_status shelf_fits(const cli_args *a, const layout *plan,
                      util_format_size(need, want, sizeof want));
 }
 
-static cli_status create_run(const cli_args *a)
+/* The stick the command line describes. `given` is a passphrase the
+ * dialogue asked for already; NULL prompts here when one is needed. */
+static cli_status create_build(const cli_args *a, const mks_pass *given)
 {
     const char *target = a->pos[0];
     const char *shim_dir = cli_value(a, "shim", DEFAULT_SHIM_DIR);
@@ -1208,6 +1214,24 @@ static cli_status create_run(const cli_args *a)
         rc = mok_check_pair(key_in, cert_in);
         if (rc != CLI_OK)
             return rc;
+    }
+    /* --key-out writes falcon-mok.key over whatever is there, and a key it
+     * replaced is a stick nothing can sign for any more. */
+    if (key_out != NULL) {
+        char there[MKS_PATH_MAX];
+        char a_real[MKS_PATH_MAX];
+        char b_real[MKS_PATH_MAX];
+
+        rc = util_join(there, sizeof there, key_out, MKS_P3_KEY_NAME);
+        if (rc != CLI_OK)
+            return rc;
+        if (util_is_file(there) &&
+            (key_in == NULL || realpath(there, a_real) == NULL ||
+             realpath(key_in, b_real) == NULL ||
+             strcmp(a_real, b_real) != 0))
+            return set_error(CLI_ERR_EXISTS, "%s holds a MOK key already; "
+                             "pass it as --key and --cert, or choose another "
+                             "--key-out", there);
     }
 
     plan_fs.has_p3 = !cli_flag(a, "no-p3");
@@ -1359,7 +1383,14 @@ static cli_status create_run(const cli_args *a)
      * out. */
     chains[1].arch = "aa64";
     chains[1].loader = loader_aa64 != NULL ? loader_aa64 : DEFAULT_LOADER_AA64;
-    if (!util_is_file(chains[1].loader)) {
+    if (cli_flag(a, "no-aa64")) {
+        if (loader_aa64 != NULL ||
+            cli_value(a, "appliance-aa64", NULL) != NULL)
+            return set_error(CLI_ERR_USAGE, "--no-aa64 leaves out the "
+                             "AArch64 chain: --%s has nothing to act on",
+                             loader_aa64 != NULL ? "loader-aa64"
+                                                 : "appliance-aa64");
+    } else if (!util_is_file(chains[1].loader)) {
         if (loader_aa64 != NULL)
             return set_error(CLI_ERR_NOTFOUND, "no AArch64 loader at %s",
                              loader_aa64);
@@ -1402,7 +1433,10 @@ static cli_status create_run(const cli_args *a)
 
     /* A passphrase opens LUKS2: an encrypted p3, or p4. */
     if ((plan_fs.has_p3 && !plan_fs.p3_plain) || plan_fs.has_p4) {
-        rc = pass_acquire(&pass, cli_value(a, "passphrase-file", NULL));
+        if (given != NULL)
+            pass = *given;
+        else
+            rc = pass_acquire(&pass, cli_value(a, "passphrase-file", NULL));
         if (rc != CLI_OK)
             return rc;
     }
@@ -1540,7 +1574,7 @@ out:
             log_info("The MOK is the one from %s: a machine that enrolled "
                      "it boots this stick as it booted the last one.",
                      cert_in);
-        else
+        else if (given == NULL)
             log_info("First boot with Secure Boot ON: shim launches "
                      "MokManager; enroll p1:/%s, reboot.", MKS_ESP_CERT_NAME);
         if (!plan_fs.has_p3)
@@ -1555,13 +1589,175 @@ out:
     return rc;
 }
 
+/* ---- interactive create ---- */
+
+/* What may be given with no target: where the parts come from, and the
+ * passphrase file. Everything else is a question the dialogue asks. */
+static const char *const preset_opts[] = {
+    "shim", "loader", "loader-aa64", "stage3", "appliance", "appliance-aa64",
+    "no-appliance", "passphrase-file", "cn"
+};
+
+static cli_status presets(const cli_args *a, const char **out, size_t cap,
+                          size_t *n)
+{
+    static char spelled[CLI_MAX_OPTS][40];
+    size_t i;
+
+    *n = 0;
+    for (i = 0; i < a->cmd->nopts && i < CLI_MAX_OPTS; i++) {
+        const cli_opt *o = &a->cmd->opts[i];
+        size_t k;
+        int ok = 0;
+
+        if (a->seen[i] == 0)
+            continue;
+        for (k = 0; k < sizeof preset_opts / sizeof preset_opts[0]; k++) {
+            if (strcmp(o->name, preset_opts[k]) == 0)
+                ok = 1;
+        }
+        if (!ok)
+            return set_error(CLI_ERR_USAGE, "--%s is answered in the "
+                             "dialogue; give a target to use it", o->name);
+        if (*n + 2u > cap)
+            return set_error(CLI_ERR_RANGE, "too many options");
+        (void)snprintf(spelled[i], sizeof spelled[i], "--%s", o->name);
+        out[(*n)++] = spelled[i];
+        if (o->kind == CLI_OPT_VALUE)
+            out[(*n)++] = cli_value(a, o->name, NULL);
+    }
+    return CLI_OK;
+}
+
+/* The passphrase, asked again when the two entries differ. */
+static cli_status ask_pass(const cli_args *a, const cui_plan *p,
+                           mks_pass *pass)
+{
+    const char *file = cli_value(a, "passphrase-file", NULL);
+    cli_status rc = CLI_OK;
+    int tries;
+
+    if (file != NULL)
+        return pass_acquire(pass, file);
+    (void)printf("\nThe passphrase opens p3%s, at the boot menu%s.\n",
+                 p->has_p4 ? " and p4" : "",
+                 p->has_p4 ? " and in the personal OS" : "");
+    (void)fflush(stdout);
+    for (tries = 0; tries < 3; tries++) {
+        rc = pass_acquire(pass, NULL);
+        if (rc != CLI_ERR_INVALID)
+            return rc;
+        log_error("%s", cli_error_msg());
+        cli_error_clear();
+    }
+    return set_error(CLI_ERR_INVALID, "no passphrase after three tries");
+}
+
+static cli_status create_interactive(const cli_args *a)
+{
+    static drv_entry drives[DRV_MAX];
+    static cui_plan plan;
+    const char *extra[2u * CLI_MAX_OPTS];
+    char key_dir[MKS_PATH_MAX];
+    char cwd[MKS_PATH_MAX];
+    size_t n_extra = 0;
+    size_t n_drives = 0;
+    drv_env env;
+    cui_io io;
+    mks_pass pass;
+    cli_args parsed;
+    cli_status rc;
+
+    memset(&pass, 0, sizeof pass);
+    rc = presets(a, extra, sizeof extra / sizeof extra[0], &n_extra);
+    if (rc != CLI_OK)
+        return rc;
+    if (geteuid() != 0)
+        return set_error(CLI_ERR_PERM, "mkstick create needs root: it "
+                         "attaches loop devices, opens LUKS mappings and "
+                         "mounts filesystems");
+
+    drv_env_default(&env);
+    /* The core rig's interactive case offers a disk of its own. */
+    if (getenv("FALCON_MKSTICK_SYS") != NULL)
+        env.sys = getenv("FALCON_MKSTICK_SYS");
+    if (getenv("FALCON_MKSTICK_DEV") != NULL)
+        env.dev = getenv("FALCON_MKSTICK_DEV");
+    rc = drv_list(&env, drives, DRV_MAX, &n_drives);
+    if (rc != CLI_OK)
+        return rc;
+
+    if (getcwd(cwd, sizeof cwd) == NULL)
+        (void)snprintf(cwd, sizeof cwd, ".");
+    rc = util_join(key_dir, sizeof key_dir, cwd, "falcon-mok");
+    if (rc != CLI_OK)
+        return rc;
+
+    io.in = stdin;
+    io.out = stdout;
+    io.drives = drives;
+    io.n_drives = n_drives;
+    io.prog = "falcon-boot-mkstick";
+    io.key_dir = key_dir;
+    rc = cui_ask(&io, &plan);
+    if (rc == CLI_OK)
+        rc = cui_build(&plan, extra, n_extra,
+                       cli_value(a, "stage3", NULL));
+    if (rc != CLI_OK)
+        return rc;
+    if (plan.has_p3) {
+        rc = ask_pass(a, &plan, &pass);
+        if (rc != CLI_OK)
+            return rc;
+    }
+    if (!cui_confirm(&io, &plan)) {
+        pass_wipe(&pass);
+        return set_error(CLI_ERR_PERM, "not confirmed; nothing was written");
+    }
+    cli_log_blank();
+
+    rc = cli_parse(&mks_cmd_create, "falcon-boot-mkstick", plan.argc,
+                   plan.argv, &parsed);
+    if (rc == CLI_OK)
+        rc = create_build(&parsed, plan.has_p3 ? &pass : NULL);
+    pass_wipe(&pass);
+    if (rc == CLI_OK && plan.bios) {
+        mks_bios_req req;
+
+        memset(&req, 0, sizeof req);
+        req.target = plan.drive->path;
+        req.stage3 = cli_value(a, "stage3", NULL);
+        req.no_backup = 1;
+        cli_log_blank();
+        rc = mks_bios_install(&req);
+    }
+    if (rc == CLI_OK)
+        cui_first_boot(stdout, &plan);
+    return rc;
+}
+
+static cli_status create_run(const cli_args *a)
+{
+    if (a->npos == 0)
+        return create_interactive(a);
+    return create_build(a, NULL);
+}
+
 const cli_cmd mks_cmd_create = {
     "create",
     "build a complete falcon-boot stick on a block device or image file",
-    "<target>",
+    "[<target>]",
     create_opts,
     sizeof create_opts / sizeof create_opts[0],
-    1, 1,
+    0, 1,
+    "With no target, create asks: which drive, what goes on it, which\n"
+    "loaders, which MOK, the passphrase, the UKIs, and filesystems and\n"
+    "sizes. Removable drives are listed first; one this machine is using is\n"
+    "listed and cannot be chosen. The summary prints the same stick as a\n"
+    "command line. With no target, only --shim, --loader, --loader-aa64,\n"
+    "--stage3, --appliance, --appliance-aa64, --no-appliance,\n"
+    "--passphrase-file and --cn may be given.\n"
+    "\n"
     "layout (DESIGN Section 3):\n"
     "  p1  ESP        FAT32          default 64M   shim, MokManager, loader, cert\n"
     "  p2  ISO lib    exFAT          half the rest drag-and-drop ISOs\n"

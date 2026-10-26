@@ -11,7 +11,8 @@
  * next-boot marker, and stationcore.c, where `station install` puts a
  * station and what its STATION.INI says, and kdfbenchcore.c, the lists and
  * table of `mkstick kdf-bench`, and disk.c's lookup of a shelf its OS has
- * open.
+ * open. And interactive create: the drives it offers (drives.c) and the
+ * command line its answers make (createui.c).
  */
 
 #include "tests.h"
@@ -23,7 +24,9 @@ int main(void)
     int failed = 0;
 
     failed += run_bioscore_tests();
+    failed += run_createui_tests();
     failed += run_disk_tests();
+    failed += run_drives_tests();
     failed += run_isoprobe_tests();
     failed += run_kdfbenchcore_tests();
     failed += run_payload_tests();
