@@ -675,19 +675,19 @@ int cui_confirm(const cui_io *io, const cui_plan *p)
 
 void cui_first_boot(FILE *out, const cui_plan *p)
 {
-    (void)fputs("\nFirst boot on a machine with Secure Boot on:\n", out);
+    (void)fputs("\nFirst boot on a machine with Secure Boot on (Manual "
+                "Section 3.1):\n", out);
     if (p->key[0] != '\0')
         (void)fputs("  A machine that enrolled this MOK boots the stick "
                     "as it is. Any other:\n", out);
     (void)fprintf(out,
-        "  1. Boot the stick. shim cannot verify the loader yet and says\n"
-        "     \"Verification failed: (0x1A) Security Violation\". Press "
-        "Enter.\n"
-        "  2. MokManager starts. Press a key within 10 seconds, or the "
-        "machine\n"
-        "     reboots and step 1 comes round again.\n"
-        "  3. Choose \"Enroll key from disk\", then the stick's ESP, then\n"
-        "     %s.\n"
+        "  1. shim says \"Verification failed: (0x1A) Security "
+        "Violation\". Press Enter\n"
+        "     on OK.\n"
+        "  2. MokManager counts down from 10. Press a key before it ends, "
+        "or the\n"
+        "     loader fails again and step 1 comes round.\n"
+        "  3. Choose \"Enroll key from disk\", then FALCONESP, then %s.\n"
         "  4. Choose Continue, then Yes, then Reboot.\n"
         "  The stick boots from then on, on that machine.\n"
         "With Secure Boot off%s, nothing is enrolled.\n",

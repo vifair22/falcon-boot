@@ -505,12 +505,70 @@ signed with it, and its certificate is `falcon-boot.cer` at the root of p1.
 On a machine with Secure Boot on, shim does not run the loader until that
 certificate is enrolled. `falcon-boot-mkstick create` ends with:
 
-    First boot with Secure Boot ON: shim launches MokManager; enroll p1:/falcon-boot.cer, reboot.
+    First boot with Secure Boot ON: in MokManager, Enroll key from disk, FALCONESP, falcon-boot.cer, Continue, Yes, Reboot (Manual Section 3.1).
 
-On the first boot shim starts MokManager in place of the loader. In
-MokManager: Enroll key from disk, the stick's ESP, `falcon-boot.cer`,
-Continue, Yes, then reboot. The next boot reaches the menu. Interactive
-create (10.1.1) ends with these steps written out.
+and interactive create (10.1.1) with the steps below, one per line. With
+Secure Boot off, or on a BIOS machine, nothing is enrolled. A stick made
+with `--key` and `--cert` boots as it is on a machine that enrolled that
+certificate already.
+
+The screens are shim 16.1's and its MokManager's, the ones `create`
+installs (Section 13.6), on an x86-64 machine; shimaa64 is the same
+program. Arrow keys move, Enter chooses.
+
+1. Boot the stick. shim cannot verify the loader yet:
+
+   ![Verification failed](img/mok-1-violation.png)
+
+   `Verification failed: (0x1A) Security Violation`. Press Enter on `OK`.
+
+2. MokManager starts:
+
+   ![Press any key to perform MOK management](img/mok-2-countdown.png)
+
+   Press a key before `Booting in N seconds` reaches 0. If it does, shim
+   tries the loader again, prints `Failed to load image: Security Policy
+   Violation`, and the firmware starts over at step 1; firmware that
+   moves on to its next boot device instead needs the stick booted
+   again.
+
+3. `Perform MOK management`: choose `Enroll key from disk`.
+
+   ![Perform MOK management](img/mok-3-menu.png)
+
+4. `Select Key` lists the volumes the firmware can read. The stick's ESP
+   is `FALCONESP`, p1's FAT label. An exFAT p2 is not listed; a FAT32 one
+   is, as `FALCON-ISO`. Choose `FALCONESP`.
+
+   ![Select Key, the volume](img/mok-4-volume.png)
+
+5. Choose `falcon-boot.cer`.
+
+   ![Select Key, the file](img/mok-5-file.png)
+
+6. `[Enroll MOK]`: `View key 0` shows the certificate; `Continue` goes on.
+
+   ![The certificate](img/mok-6-key.png)
+
+   The subject is `CN=falcon-boot MOK`, or the `--cn` the stick was made
+   with. The fingerprint is the certificate's SHA-1, the same as on the
+   host:
+
+       openssl x509 -inform der -in falcon-boot.cer -noout -fingerprint -sha1
+
+   Any key returns to `[Enroll MOK]`; choose `Continue`.
+
+7. `Enroll the key(s)?`: choose `Yes`. There is no password: the key comes
+   from the disk, at the machine.
+
+   ![Enroll the key(s)?](img/mok-7-confirm.png)
+
+8. Choose `Reboot`.
+
+   ![Reboot](img/mok-8-reboot.png)
+
+The next boot reaches the menu, and its title bar reads `SB: on  trusts:
+MOK, ...` (Section 3).
 
 From Linux on that machine instead:
 
@@ -2281,7 +2339,7 @@ refused while any of its partitions is mounted.
 It ends:
 
     <target> is ready (install ID <32 hex digits>).
-    First boot with Secure Boot ON: shim launches MokManager; enroll p1:/falcon-boot.cer, reboot.
+    First boot with Secure Boot ON: in MokManager, Enroll key from disk, FALCONESP, falcon-boot.cer, Continue, Yes, Reboot (Manual Section 3.1).
 
 ### 10.2 bios
 
