@@ -359,6 +359,10 @@ static cli_status open_key(upd_ctx *c, const cli_args *a, shelf_key *sk,
     }
 
     if (c->p.kind == UPD_STICK) {
+        if (c->f.shelf < 0)
+            return set_error(CLI_ERR_NOTFOUND, "this stick has no shelf "
+                             "(mkstick create --no-p3); give the MOK with "
+                             "--key and --cert");
         p = &c->r.parts[c->f.shelf];
         luks = c->r.recs[c->f.shelf].luks;
     } else {

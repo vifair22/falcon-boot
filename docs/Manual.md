@@ -2157,13 +2157,15 @@ exist, and that every `--uki` exists.
 | `--key`, `--cert` | a new MOK | an existing MOK private key and its certificate, both PEM, instead of a new pair: a replacement stick keeps the MOK the machines already enrolled. The key must be the certificate's, checked before anything is written. The first boot needs no enrollment where that certificate is enrolled |
 | `--cert-out` | none | also writes the public certificate here, PEM |
 | `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
+| `--no-p4` | off | no p4: p1 to p3, a shelf for UKIs and the signing appliance with no personal-OS root; p2 takes the space unless `--iso-size` is given; refused with `--p4-size` |
+| `--no-p3` | off | no p3 and no p4: p1 and p2 alone, a stick that boots media and is blessed from this host; requires `--key-out`, asks for no passphrase, and refuses every option about the shelf (`--uki`, `--p3-*`, `--p4-size`, `--no-p4`, `--passphrase-file`) |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |
 | `--p2-fs` | `exfat` | p2's filesystem: `exfat` or `fat32`. FAT32 holds no file of 4 GiB or more, which rules out most Windows ISOs; create says so before it writes anything |
 | `--p3-fs` | `ext4` | p3's filesystem: `ext4`, `fat32`, `btrfs` or `xfs` (DESIGN Section 3); `btrfs` needs `mkfs.btrfs`, `xfs` needs `mkfs.xfs` and a `--p3-size` of `320M` or more. A FAT32 shelf is mounted `umask=0077` while the key is written |
 | `--stage3` | `build/bin/falcon-bios-stage3.bin` | the BIOS stage 3 p1's reserved sectors are sized for |
 
 With neither `--iso-size` nor `--p4-size`, what is left after p1 and p3 is
-halved. One of them given leaves the rest to the other; both given are
+halved (with `--no-p4` or `--no-p3`, p2 takes it all). One of them given leaves the rest to the other; both given are
 taken as they are. The floors are p1 16 MiB, p2 8 MiB, p3 48 MiB and p4
 24 MiB, and a layout below one is refused with the size it needs.
 
@@ -2178,7 +2180,10 @@ What it makes:
 
 p3's keyslot is argon2id at 32768 KiB, time 4, 4 lanes, `aes-xts-plain64`
 with a 512-bit key. p4 takes cryptsetup's own argon2id cost. Both share the
-one passphrase. With `--p3-plain`, p3 is its filesystem alone and holds `/uki/`,
+one passphrase. `--no-p4` leaves p4 out, and `--no-p3` both p3 and p4:
+the loaders then draw no Personal OS row, `mkstick status` notes the stick
+has no shelf, and `mkstick update` takes the MOK from `--key` and `--cert`.
+With `--p3-plain`, p3 is its filesystem alone and holds `/uki/`,
 `/falcon-mok.crt` and `/.falcon`, with no private key; the loader asks for
 no passphrase and the initramfs prompts for p4 itself.
 
@@ -2721,7 +2726,7 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 | `--arch` | this machine's | the station's architecture, `x64` or `aa64` (10.6) |
 | `--backup-dir` | `.` | where what is replaced is saved |
 | `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
-| `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it; given together |
+| `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it or that has none (`create --no-p3`); given together |
 | `--owner-auth-file` | as for `station totp` | the TPM owner's authorisation, for the reseal |
 | `--dry-run` | off | prints the plan and writes nothing |
 | `--yes` | off | does not ask |
@@ -2730,7 +2735,7 @@ What the disk is comes from its records:
 
 | disk | found by | written |
 |---|---|---|
-| stick | a boot record, with a library and a shelf of its install ID | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1 |
+| stick | a boot record, with a library of its install ID (and its shelf, unless made `--no-p3`) | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1 |
 | BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
 | UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |

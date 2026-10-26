@@ -138,6 +138,11 @@
 #                  btrfs driver
 #   fs-p3-xfs-uefi, fs-p3-xfs-bios
 #                  the same for `--p3-fs xfs`, its 320 MiB p3
+#   no-p4-uefi, no-p4-bios
+#                  a stick `mkstick create --no-p4` made (p1 to p3): judged
+#                  as uefi-stick, the personal OS off its shelf
+#   no-p3-uefi     a stick `mkstick create --no-p3` made (p1 and p2): no
+#                  Personal OS row, and payload-test.iso boots off its library
 #   fs-p3-xfs-dirty-uefi, fs-p3-xfs-dirty-bios
 #                  that stick with its UKI renamed to resumed.efi, fsynced,
 #                  and the filesystem shut down with nothing written back:
@@ -338,19 +343,24 @@ build_sticks() {
 # --p3-fs` (and `mkstick bios`) the first time a case asks for it:
 # $R/stick-NAME.img, its library holding NAME.iso, its install ID in
 # $R/stick-NAME.id. 1 GiB, so p3 has the 320 MiB xfs asks for.
-fs_stick() {    # fs_stick NAME P2_FS P3_FS
-    local img=$R/stick-$1.img log=$R/stick-$1.build p2
+fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3]
+    local img=$R/stick-$1.img log=$R/stick-$1.build p2 shelf
     [[ -f "$img" && "${FS_BUILT[$1]:-}${KEEP:-0}" == *1* ]] && return 0
+    case ${4:-} in
+    no-p3) shelf=(--no-p3 --key-out "$R/keys-$1") ;;
+    no-p4) shelf=(--no-p4 --p3-size 320M --p3-fs "$3"
+                  --passphrase-file "$R/pass" --uki build/test/fixture-uki.efi) ;;
+    *)     shelf=(--p3-size 320M --p4-size rest --p3-fs "$3"
+                  --passphrase-file "$R/pass" --uki build/test/fixture-uki.efi) ;;
+    esac
     rm -f "$img"
     truncate -s 1G "$img"
     ( umask 077; printf '%s' "$PASS" > "$R/pass" )
     attach "$img"
     # shellcheck disable=SC2024  # the log is ours, not root's
     sudo "$MKSTICK" --quiet create "$LOOP" --force \
-        --p1-size 300M --iso-size 128M --p3-size 320M --p4-size rest \
-        --p2-fs "$2" --p3-fs "$3" \
-        --passphrase-file "$R/pass" --shim build/shim/bins \
-        --loader build/bin/falcon-boot.efi --uki build/test/fixture-uki.efi \
+        --p1-size 300M --iso-size 128M --p2-fs "$2" "${shelf[@]}" \
+        --shim build/shim/bins --loader build/bin/falcon-boot.efi \
         --cn "falcon-boot $1 rig" >"$log" 2>&1 || { rm -f "$R/pass"; detach; return 1; }
     rm -f "$R/pass"
     p2=$(sudo "$MKSTICK" ident "$LOOP" | awk -F '\t' '$2 == "library" { print $1 }')
@@ -372,9 +382,9 @@ fs_stick() {    # fs_stick NAME P2_FS P3_FS
 }
 declare -A FS_BUILT=()
 
-# fs_case CASE FIRMWARE NAME P2_FS P3_FS: stick_case on that stick.
+# fs_case CASE FIRMWARE NAME P2_FS P3_FS [LAYOUT]: stick_case on that stick.
 fs_case() {
-    if ! fs_stick "$3" "$4" "$5"; then
+    if ! fs_stick "$3" "$4" "$5" "${6:-}"; then
         result "$1" 0 "the $3 stick did not build ($R/stick-$3.build)"
         return
     fi
@@ -382,21 +392,28 @@ fs_case() {
         "$R/stick-$3.img:boot"
 }
 
-# fs_iso CASE NAME P2_FS P3_FS: payload-test.iso off that stick's library,
-# through the virtual CD, under OVMF.
+# fs_iso CASE NAME P2_FS P3_FS [LAYOUT]: payload-test.iso off that stick's
+# library, through the virtual CD, under OVMF. A stick with no shelf must
+# also draw no Personal OS row.
 fs_iso() {
     local why= row i
-    if ! fs_stick "$2" "$3" "$4"; then
+    if ! fs_stick "$2" "$3" "$4" "${5:-}"; then
         result "$1" 0 "the $2 stick did not build ($R/stick-$2.build)"
         return
     fi
     boot uefi "$R/stick-$2.img:boot"
     wait_for payload-test.iso 90 || why="the menu never listed payload-test.iso"
+    if [[ -z "$why" && "${5:-}" == no-p3 ]]; then
+        has "Personal OS" && why="a stick with no shelf drew a Personal OS row"
+    fi
     if [[ -z "$why" ]]; then
         sleep 1
         row=$(row_of payload-test.iso) || true
         [[ -n "$row" ]] || why="no row for payload-test.iso"
     fi
+    # row_of counts from 1, the Personal OS row being 0; with no shelf the
+    # ISOs start at the top.
+    [[ -z "$why" && "${5:-}" == no-p3 ]] && row=$(( row - 1 ))
     if [[ -z "$why" ]]; then
         for (( i = 0; i < row; i++ )); do
             mon "sendkey down"
@@ -408,7 +425,7 @@ fs_iso() {
     fi
     halt
     if [[ -z "$why" ]]; then
-        result "$1" 1 "payload-test.iso ran its payload off a $3 library"
+        result "$1" 1 "payload-test.iso ran its payload off the $3 library${5:+ ($5)}"
     else
         result "$1" 0 "$why"
     fi
@@ -1809,7 +1826,7 @@ CASES=("$@")
            fs-p3-fat-uefi fs-p3-fat-bios fs-p2-fat-uefi fs-p2-fat-bios
            fs-p2-fat-iso-uefi fs-p3-btrfs-uefi fs-p3-btrfs-bios
            fs-p3-xfs-uefi fs-p3-xfs-bios fs-p3-xfs-dirty-uefi
-           fs-p3-xfs-dirty-bios
+           fs-p3-xfs-dirty-bios no-p4-uefi no-p4-bios no-p3-uefi
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1871,6 +1888,9 @@ for c in "${CASES[@]}"; do
         fs_case "$c" "${c##*-}" p3-btrfs exfat btrfs ;;
     fs-p3-xfs-uefi|fs-p3-xfs-bios)
         fs_case "$c" "${c##*-}" p3-xfs exfat xfs ;;
+    no-p4-uefi|no-p4-bios)
+        fs_case "$c" "${c##*-}" no-p4 exfat ext4 no-p4 ;;
+    no-p3-uefi) fs_iso "$c" no-p3 exfat ext4 no-p3 ;;
     fs-p3-xfs-dirty-uefi|fs-p3-xfs-dirty-bios)
         case_xfs_dirty "$c" "${c##*-}" ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
