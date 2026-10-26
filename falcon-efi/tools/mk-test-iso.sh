@@ -60,6 +60,9 @@ MNT=$(mktemp -d)
 sudo mount -o loop,uid="$(id -u)",gid="$(id -g)" "$FATIMG" "$MNT"
 mkdir -p "$MNT/EFI/BOOT"
 cp "$PAYLOAD" "$MNT/EFI/BOOT/BOOTX64.EFI"
+# The AArch64 build beside it, so the one ISO chainloads on either machine.
+[[ -f build/test/payload-aa64.efi ]] &&
+    cp build/test/payload-aa64.efi "$MNT/EFI/BOOT/BOOTAA64.EFI"
 sync
 sudo umount "$MNT"
 rmdir "$MNT"
@@ -67,12 +70,15 @@ MNT=
 
 # -no-emul-boot with an EFI platform id is the whole point: it makes the boot
 # catalog entry a raw FAT image the firmware surfaces as an ESP, rather than a
-# floppy/hard-disk emulation.
+# floppy/hard-disk emulation. The image is MBR partition 2, type 0xEF, and
+# the El Torito entry points at that partition, as Debian's isohybrid media
+# do: a firmware that cannot read El Torito's 512-byte FAT on 2048-byte
+# media (U-Boot) boots the ISO as that disk (falcon-efi/src/iso/iso.c).
 mkdir -p "$STAGE"
-cp "$FATIMG" "$STAGE/efiboot.img"
 xorriso -as mkisofs \
     -V FALCON_PAYLOAD \
-    -e efiboot.img \
+    -append_partition 2 0xef "$FATIMG" \
+    -e --interval:appended_partition_2:all:: \
     -no-emul-boot \
     -o "$ISO" \
     "$STAGE" >/dev/null 2>&1

@@ -53,13 +53,16 @@
 
 #define UKI_UNAME_MAX 128u
 
-/* Where systemd-boot installs the x64 stub; what --stub defaults to. */
-#define UKI_DEFAULT_STUB "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+/* Where systemd-boot installs its stubs, one per architecture. With no
+ * --stub, the kernel's own PE machine picks one (uki_default_stub). */
+#define UKI_STUB_DIR "/usr/lib/systemd/boot/efi"
+#define UKI_STUB_X64 UKI_STUB_DIR "/linuxx64.efi.stub"
+#define UKI_STUB_AA64 UKI_STUB_DIR "/linuxaa64.efi.stub"
 
 /* What to build. Paths for the two large inputs, which are streamed and never
  * held in memory whole (an embedded initrd is 100-250 MB); text for the rest. */
 typedef struct {
-    const char *stub;
+    const char *stub;       /* NULL: the stub for the kernel's machine */
     const char *kernel;
     const char *initrd;     /* NULL: no .initrd section */
     const char *cmdline;
@@ -72,8 +75,23 @@ typedef struct {
     int         bios_only;
 } uki_spec;
 
-/* Builds spec->out. SGN_OK or a negative SGN_ERR_* with the error buffer set. */
+/* Builds spec->out. SGN_OK or a negative SGN_ERR_* with the error buffer set.
+ * The stub and the kernel must be one machine's: an x64 stub cannot start an
+ * arm64 kernel. */
 int uki_build(const uki_spec *spec);
+
+/* The stub systemd-boot installs for a PE machine, NULL for one it has
+ * none for. */
+const char *uki_default_stub(uint16_t machine);
+
+/* The PE machine of the kernel at path, 0 when it is not a PE (a bzImage
+ * with no EFI stub, or a kernel still compressed as a whole). */
+uint16_t uki_kernel_machine(const char *path);
+
+/* A kernel that is one gzip member, as Debian's and Ubuntu's arm64 vmlinuz
+ * is, unpacked over itself; any other file is left as it is. For a staged
+ * copy only: the file is rewritten. */
+int uki_kernel_unpack(const char *path);
 
 /* `falcon-boot-sign uki ...`: the same build from the command line, for the
  * images this tool does not bless (the appliance). argv[0] is "uki". */
@@ -92,6 +110,11 @@ void uki_cmdline_norm(const char *in, char *out);
  * the string has the "version (builder) #..." shape. 1 when found, 0 when the
  * image carries none (the UKI then has no .uname, as ukify's does not). */
 int uki_uname(const uint8_t *k, size_t len, char *out, size_t cap);
+
+/* The same from any other kernel, as ukify's scrape_generic reads it: the
+ * first "Linux version <digit><non-space>* (" in its bytes. An arm64 Image
+ * carries the banner in the clear. 1 when found, 0 when not. */
+int uki_uname_generic(const uint8_t *k, size_t len, char *out, size_t cap);
 
 /* ukify's merge_sbat: the "sbat," header line once, then every input's lines
  * after its own header, in order. An input whose first line is not a header is

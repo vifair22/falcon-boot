@@ -54,6 +54,7 @@
 #include <falcon-bios/src/start/biosdefs.h>
 
 #define DEFAULT_FROM FALCON_DATADIR "/bin"
+#define DEFAULT_SHIM FALCON_DATADIR "/shim/bins"
 /* A loader, a stage 3 or a shim is well under this. */
 #define FILE_MAX ((size_t)16 * 1024 * 1024)
 
@@ -78,6 +79,12 @@ typedef struct {
      * station's EFI/falcon. */
     char        stick_name[SHIM_NEXT_STAGE_MAX];
     char        station_name[SHIM_NEXT_STAGE_MAX];
+    /* A stick's AArch64 chain (BOOTAA64.EFI on p1): its shim's next stage,
+     * whether the loader under that name is there, and, for a stick made
+     * before it had one, whether update adds the chain. */
+    char        stick_name_aa64[SHIM_NEXT_STAGE_MAX];
+    int         stick_aa64;
+    int         stick_aa64_add;
     /* The old station loader's digests, for the reseal. */
     uint8_t     old1[32];
     uint8_t     old256[32];
@@ -127,18 +134,20 @@ static cli_status read_file(const upd_ctx *c, uint64_t off, uint64_t len,
     return CLI_OK;
 }
 
-/* The next stage a stick's shim names: shim copied off p1 to a temporary
- * file, since shimname.c reads a path. */
-static cli_status stick_loader_name(upd_ctx *c)
+/* The next stage the shim at p1's /EFI/BOOT/<shim> names: shim copied off
+ * p1 to a temporary file, since shimname.c reads a path. */
+static cli_status stick_loader_name(upd_ctx *c, const char *shim, char *out,
+                                    size_t cap)
 {
     char tmp[] = "/tmp/falcon-update-shim.XXXXXX";
+    char path[MKS_PATH_MAX];
     uint8_t *buf = NULL;
     size_t n = 0;
     int fd;
     cli_status rc;
 
-    rc = read_file(c, c->boot_off, c->boot_len,
-                   "/" MKS_ESP_BOOT_DIR "/" MKS_ESP_SHIM_NAME, &buf, &n);
+    (void)snprintf(path, sizeof path, "/%s/%s", MKS_ESP_BOOT_DIR, shim);
+    rc = read_file(c, c->boot_off, c->boot_len, path, &buf, &n);
     if (rc != CLI_OK)
         return rc;
     fd = mkstemp(tmp);
@@ -150,7 +159,7 @@ static cli_status stick_loader_name(upd_ctx *c)
     rc = util_write_file(tmp, buf, n, 0600);
     free(buf);
     if (rc == CLI_OK)
-        rc = shim_next_stage_name(tmp, c->stick_name, sizeof c->stick_name);
+        rc = shim_next_stage_name(tmp, out, cap);
     (void)unlink(tmp);
     return rc;
 }
@@ -212,12 +221,25 @@ static cli_status gather(upd_ctx *c)
             f->mods |= has_file(c, c->boot_off, c->boot_len, k_mod_paths[i]);
         if (has_file(c, c->boot_off, c->boot_len,
                      "/" MKS_ESP_BOOT_DIR "/" MKS_ESP_SHIM_NAME) &&
-            stick_loader_name(c) == CLI_OK) {
+            stick_loader_name(c, MKS_ESP_SHIM_NAME, c->stick_name,
+                              sizeof c->stick_name) == CLI_OK) {
             char path[MKS_PATH_MAX];
 
             (void)snprintf(path, sizeof path, "/%s/%s", MKS_ESP_BOOT_DIR,
                            c->stick_name);
             f->stick_loader = has_file(c, c->boot_off, c->boot_len, path);
+        }
+        cli_error_clear();
+        if (f->stick_loader &&
+            has_file(c, c->boot_off, c->boot_len,
+                     "/" MKS_ESP_BOOT_DIR "/" MKS_ESP_SHIM_NAME_AA64) &&
+            stick_loader_name(c, MKS_ESP_SHIM_NAME_AA64, c->stick_name_aa64,
+                              sizeof c->stick_name_aa64) == CLI_OK) {
+            char path[MKS_PATH_MAX];
+
+            (void)snprintf(path, sizeof path, "/%s/%s", MKS_ESP_BOOT_DIR,
+                           c->stick_name_aa64);
+            c->stick_aa64 = has_file(c, c->boot_off, c->boot_len, path);
         }
         cli_error_clear();
     }
@@ -235,7 +257,7 @@ static cli_status gather(upd_ctx *c)
         }
         cli_error_clear();
         f->station_shim = has_file(c, c->esp_off, c->esp_len,
-                                   "/" STN_ESP_DIR "/" STN_ESP_SHIM);
+                                   stn_n()->shim_abs);
         if (stn_esp_jump_state(c->d.path, c->esp_off, c->esp_len,
                                &f->jump_present, &f->jump_ours) != CLI_OK) {
             /* Unreadable is someone else's until it reads as ours. */
@@ -643,7 +665,7 @@ static int jump_digest(const upd_ctx *c, const char *esp, const char *host,
 static cli_status do_jump(upd_ctx *c, const cli_args *a, const mok_keys *keys,
                           const char *from, const char *workdir)
 {
-    static const char path[] = "/" STN_ESP_BOOT_DIR "/" STN_ESP_JUMP;
+    const char *path = stn_n()->jump_abs;
     char src[MKS_PATH_MAX];
     char backup[MKS_PATH_MAX];
     uint8_t before[32];
@@ -651,10 +673,10 @@ static cli_status do_jump(upd_ctx *c, const cli_args *a, const mok_keys *keys,
     int had;
     cli_status rc;
 
-    (void)snprintf(src, sizeof src, "%s/falcon-esp-jump.efi", from);
+    (void)snprintf(src, sizeof src, "%s/%s", from, stn_n()->jump_file);
     if (!util_is_file(src))
-        return set_error(CLI_ERR_NOTFOUND, "no falcon-esp-jump.efi under %s",
-                         from);
+        return set_error(CLI_ERR_NOTFOUND, "no %s under %s",
+                         stn_n()->jump_file, from);
     had = c->p.jump == STN_JUMP_RESIGN &&
           jump_digest(c, path, NULL, before);
     rc = do_uefi(c, a, keys, c->esp_off, c->esp_len, STN_ESP_BOOT_DIR,
@@ -726,6 +748,16 @@ static void describe(const upd_ctx *c)
                  c->r.parts[c->f.boot].number,
                  dos_path(MKS_ESP_BOOT_DIR, c->stick_name, path,
                           sizeof path));
+    if (p->uefi_stick && c->stick_aa64)
+        log_info("  write: p%u %s, signed with the stick's MOK",
+                 c->r.parts[c->f.boot].number,
+                 dos_path(MKS_ESP_BOOT_DIR, c->stick_name_aa64, path,
+                          sizeof path));
+    else if (p->uefi_stick && c->stick_aa64_add)
+        log_info("  write: p%u's AArch64 chain, which it has not had: "
+                 "%s, its MokManager and %s, signed with the stick's MOK",
+                 c->r.parts[c->f.boot].number, MKS_ESP_SHIM_NAME_AA64,
+                 c->stick_name_aa64);
     if (p->uefi_station && p->rename)
         log_info("  write: partition %u \\EFI\\falcon\\%s in place of %s, "
                  "signed with the station's MOK",
@@ -800,7 +832,67 @@ static cli_status writable(const upd_ctx *c)
     return CLI_OK;
 }
 
-static cli_status update_run(const cli_args *a)
+/* The AArch64 chain's shim and MokManager, when update adds the chain. */
+static char g_aa64_shim[MKS_PATH_MAX];
+static char g_aa64_mm[MKS_PATH_MAX];
+static char g_aa64_mm_name[SHIM_NEXT_STAGE_MAX];
+
+/* What update does with a stick's AArch64 chain. One it has: its loader is
+ * rewritten, when this release has an AArch64 loader. One it has not (a
+ * stick made before 0.2.0): added, shimaa64 and its MokManager from --shim
+ * beside the loader, when both are here; otherwise the stick stays x86-64
+ * only, and update says so. */
+static void plan_aa64(upd_ctx *c, const char *from, const char *shim_dir)
+{
+    char loader[MKS_PATH_MAX];
+
+    (void)snprintf(loader, sizeof loader, "%s/falcon-boot-aa64.efi", from);
+    if (!util_is_file(loader)) {
+        if (c->stick_aa64)
+            log_warn("%s has no falcon-boot-aa64.efi; the stick's AArch64 "
+                     "loader is left as it is", from);
+        c->stick_aa64 = 0;
+        return;
+    }
+    if (c->stick_aa64)
+        return;
+    if (shim_find(shim_dir, "aa64", g_aa64_shim, sizeof g_aa64_shim) !=
+            CLI_OK ||
+        shim_next_stage_name(g_aa64_shim, c->stick_name_aa64,
+                             sizeof c->stick_name_aa64) != CLI_OK ||
+        shim_mokmanager_name(g_aa64_shim, g_aa64_mm_name,
+                             sizeof g_aa64_mm_name) != CLI_OK ||
+        shim_find_mokmanager(g_aa64_shim, "aa64", g_aa64_mm_name, g_aa64_mm,
+                             sizeof g_aa64_mm) != CLI_OK) {
+        log_warn("%s; the stick stays x86-64 only", cli_error_msg());
+        cli_error_clear();
+        return;
+    }
+    c->stick_aa64_add = 1;
+}
+
+/* shimaa64 and its MokManager onto p1, as they ship: they carry their own
+ * signatures (DESIGN Section 4). */
+static cli_status add_aa64_chain(upd_ctx *c)
+{
+    char dst[MKS_PATH_MAX];
+    cli_status rc;
+
+    (void)snprintf(dst, sizeof dst, "%s/%s", MKS_ESP_BOOT_DIR,
+                   MKS_ESP_SHIM_NAME_AA64);
+    rc = stn_mtools_put(c->d.path, c->boot_off, g_aa64_shim, dst);
+    if (rc == CLI_OK) {
+        (void)snprintf(dst, sizeof dst, "%s/%s", MKS_ESP_BOOT_DIR,
+                       g_aa64_mm_name);
+        rc = stn_mtools_put(c->d.path, c->boot_off, g_aa64_mm, dst);
+    }
+    if (rc == CLI_OK)
+        log_info("UEFI: /%s/%s and %s written", MKS_ESP_BOOT_DIR,
+                 MKS_ESP_SHIM_NAME_AA64, g_aa64_mm_name);
+    return rc;
+}
+
+static cli_status update_run_arch(const cli_args *a)
 {
     static upd_ctx c;
     const char *from = cli_value(a, "from", DEFAULT_FROM);
@@ -825,6 +917,8 @@ static cli_status update_run(const cli_args *a)
     if (rc != CLI_OK)
         return rc;
     upd_plan_make(&c.f, &c.p);
+    if (c.p.uefi_stick)
+        plan_aa64(&c, from, cli_value(a, "shim", DEFAULT_SHIM));
     if (c.p.kind == UPD_REFUSE)
         return set_error(CLI_ERR_INVALID, "%s: %s; nothing written",
                          c.d.path, c.p.why);
@@ -866,8 +960,16 @@ static cli_status update_run(const cli_args *a)
         rc = do_uefi(&c, a, &keys, c.boot_off, c.boot_len, MKS_ESP_BOOT_DIR,
                      c.stick_name, src, "stick-loader", 0, 0, workdir);
     }
+    if (rc == CLI_OK && c.p.uefi_stick && c.stick_aa64_add)
+        rc = add_aa64_chain(&c);
+    if (rc == CLI_OK && c.p.uefi_stick && (c.stick_aa64 || c.stick_aa64_add)) {
+        (void)snprintf(src, sizeof src, "%s/falcon-boot-aa64.efi", from);
+        rc = do_uefi(&c, a, &keys, c.boot_off, c.boot_len, MKS_ESP_BOOT_DIR,
+                     c.stick_name_aa64, src, "stick-loader-aa64", 0,
+                     c.stick_aa64_add, workdir);
+    }
     if (rc == CLI_OK && c.p.uefi_station) {
-        (void)snprintf(src, sizeof src, "%s/falcon-boot-station.efi", from);
+        (void)snprintf(src, sizeof src, "%s/%s", from, stn_n()->loader_file);
         if (c.p.rename)
             rc = rename_loader(&c, a, &keys, src, workdir);
         else
@@ -918,9 +1020,21 @@ static cli_status update_run(const cli_args *a)
     return CLI_OK;
 }
 
+static cli_status update_run(const cli_args *a)
+{
+    cli_status rc = stn_arch_option(a);
+
+    return rc != CLI_OK ? rc : update_run_arch(a);
+}
+
 static const cli_opt update_opts[] = {
+    { "arch", CLI_OPT_VALUE, 0, "<x64|aa64>",
+      "the machine the station boots (default: this one's)" },
     { "from", CLI_OPT_VALUE, 0, "<dir>",
       "the built loaders (default " DEFAULT_FROM ")" },
+    { "shim", CLI_OPT_VALUE, 0, "<dir>",
+      "shimaa64.efi and its MokManager, for a stick that gains the AArch64 "
+      "chain (default " DEFAULT_SHIM ")" },
     { "backup-dir", CLI_OPT_VALUE, 0, "<dir>",
       "where what is replaced is saved (default .)" },
     { "passphrase-file", CLI_OPT_VALUE, 0, "<file>",

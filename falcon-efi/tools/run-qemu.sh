@@ -6,8 +6,8 @@
 # Serial output mirrors the firmware console for logging; OVMF's debug port
 # is captured to build/ovmf-debug.log.
 #
-# Usage: falcon-efi/tools/run-qemu.sh [--secboot|--bios] [--stick] [--headless]
-#                                     [qemu args...]
+# Usage: falcon-efi/tools/run-qemu.sh [--secboot|--bios] [--aa64] [--stick]
+#                                     [--headless] [qemu args...]
 #   --secboot   Secure Boot OVMF, with the real chain staged: shim as the
 #               removable-media default loader, our SIGNED loader under the
 #               next-stage name shim has compiled in, and a varstore that
@@ -19,6 +19,14 @@
 #               refuses to combine with --secboot, which has no meaning on a
 #               platform with no db. Nothing about the UEFI paths changes.
 #
+#   --uboot     --aa64 under U-Boot's UEFI instead of AAVMF: a devicetree
+#               machine (UBOOT_BIN, default Debian's qemu_arm64 build); not
+#               with --secboot
+#   --aa64      the AArch64 loader (build/bin/falcon-boot-aa64.efi) on
+#               qemu-system-aarch64's virt machine under AAVMF: BOOTAA64.EFI,
+#               shimaa64's names under --secboot, an xhci keyboard and ramfb
+#               for the display. TCG on an x86-64 host (slow); KVM where the
+#               host is AArch64. Not with --bios.
 #   --stick     boot build/test-stick.img and nothing else: no vvfat ESP, no
 #               separate exFAT fixture, just the one raw disk with a real GPT on
 #               it (falcon-efi/tools/mk-test-stick.sh). This is the shape the
@@ -51,6 +59,8 @@
 #               earlier run would silently supply the OLD MokList.
 #   SERIAL_LOG  --headless serial log        (default build/serial.log)
 #   MON_SOCK    --headless monitor socket    (default build/mon.sock)
+#   SERIAL_PIPE --headless with the one serial port on the FIFO pair
+#               SERIAL_PIPE.in/.out instead of SERIAL_LOG
 
 set -euo pipefail
 
@@ -103,6 +113,15 @@ while [[ $# -gt 0 ]]; do
         BIOS=1
         shift
         ;;
+    --aa64)
+        AA64=1
+        shift
+        ;;
+    --uboot)
+        UBOOT=1
+        AA64=1
+        shift
+        ;;
     --stick)
         STICK=1
         shift
@@ -117,6 +136,51 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# The architecture's names and firmware, decided once every option is read.
+ARCH_UP=X64
+ARCH_LOW=x64
+if [[ "${AA64:-0}" -eq 1 ]]; then
+    if [[ "${BIOS:-0}" -eq 1 ]]; then
+        echo "ERROR: --aa64 and --bios are exclusive: AArch64 has no BIOS" >&2
+        exit 1
+    fi
+    ARCH_UP=AA64
+    ARCH_LOW=aa64
+    EFI_BIN="$BUILD/bin/falcon-boot-aa64.efi"
+    EFI_SIGNED="$BUILD/bin/falcon-boot-aa64-signed.efi"
+    SHIM_EFI="$SHIM_BINS/fedora-16.1-shimaa64.efi"
+    MM_EFI="$SHIM_BINS/fedora-16.1-mmaa64.efi"
+    if [[ "$SECBOOT" -eq 1 ]]; then
+        CODE=$(aavmf_find CODE secboot || true)
+        MOK_VARS="${MOK_VARS_AA64:-$BUILD/mok-test/AAVMF_VARS.secboot.mok.fd}"
+        VARS_SRC="$MOK_VARS"
+        VARS="${VARS_FILE:-$BUILD/AAVMF_VARS.secboot.fd}"
+        ESP="$BUILD/esp-aa64-secboot"
+    else
+        CODE=$(aavmf_find CODE plain || true)
+        VARS_SRC=$(aavmf_find VARS plain || true)
+        VARS="${VARS_FILE:-$BUILD/AAVMF_VARS.fd}"
+        ESP="$BUILD/esp-aa64"
+    fi
+    # The copy keeps its source's format, which fw_format reads off the name.
+    [[ -z "${VARS_FILE:-}" && "$VARS_SRC" == *.qcow2 ]] && VARS="${VARS%.fd}.qcow2"
+fi
+# U-Boot's UEFI on virt: a devicetree machine. QEMU hands U-Boot the DTB it
+# generates and U-Boot installs it as the EFI configuration table; there is
+# no ACPI. U-Boot keeps its variables in a file on the ESP and has no
+# enrolled keys here, so there is no pflash and no Secure Boot.
+UBOOT_BIN="${UBOOT_BIN:-/usr/lib/u-boot/qemu_arm64/u-boot.bin}"
+if [[ "${UBOOT:-0}" -eq 1 ]]; then
+    if [[ "$SECBOOT" -eq 1 ]]; then
+        echo "ERROR: --uboot runs without Secure Boot (U-Boot has no keys here)" >&2
+        exit 1
+    fi
+    [[ -f "$UBOOT_BIN" ]] ||
+        { echo "ERROR: U-Boot not found at $UBOOT_BIN (u-boot-qemu; set UBOOT_BIN)" >&2; exit 1; }
+    CODE=$UBOOT_BIN
+    ESP="$BUILD/esp-aa64-uboot"
+fi
+
 if [[ "${BIOS:-0}" -eq 1 && "$SECBOOT" -eq 1 ]]; then
     echo "ERROR: --bios and --secboot are exclusive: a BIOS machine has no db," \
          "no shim and nothing to enforce" >&2
@@ -125,7 +189,7 @@ fi
 
 # OVMF is only needed when the firmware is OVMF.
 if [[ "${BIOS:-0}" -ne 1 ]]; then
-    [[ -f "$CODE" ]] || { echo "ERROR: OVMF not found at $CODE (set OVMF_DIR)" >&2; exit 1; }
+    [[ -f "$CODE" ]] || { echo "ERROR: firmware not found at '$CODE' (set OVMF_DIR, or AAVMF_DIR for --aa64)" >&2; exit 1; }
 fi
 
 # In stick mode the disk image already carries its own ESP and its own copy of
@@ -153,9 +217,9 @@ elif [[ "$SECBOOT" -eq 1 ]]; then
     # unsigned loader directly and make the whole run meaningless.
     rm -rf "$ESP"
     mkdir -p "$ESP/EFI/BOOT"
-    cp "$SHIM_EFI" "$ESP/EFI/BOOT/BOOTX64.EFI"
-    cp "$MM_EFI" "$ESP/EFI/BOOT/mmx64.efi"
-    cp "$EFI_SIGNED" "$ESP/EFI/BOOT/grubx64.efi"
+    cp "$SHIM_EFI" "$ESP/EFI/BOOT/BOOT$ARCH_UP.EFI"
+    cp "$MM_EFI" "$ESP/EFI/BOOT/mm$ARCH_LOW.efi"
+    cp "$EFI_SIGNED" "$ESP/EFI/BOOT/grub$ARCH_LOW.efi"
 elif [[ "${BIOS:-0}" -eq 1 ]]; then
     # Nothing to stage. A BIOS machine has no ESP to put a loader in: it
     # boots whatever is in the first drive's MBR, so what runs is whatever
@@ -165,14 +229,16 @@ elif [[ "${BIOS:-0}" -eq 1 ]]; then
 else
     [[ -f "$EFI_BIN" ]] || { echo "ERROR: $EFI_BIN not built (run make first)" >&2; exit 1; }
     mkdir -p "$ESP/EFI/BOOT"
-    cp "$EFI_BIN" "$ESP/EFI/BOOT/BOOTX64.EFI"
+    cp "$EFI_BIN" "$ESP/EFI/BOOT/BOOT$ARCH_UP.EFI"
 fi
 
 # Writable per-checkout copy of the varstore so MOK/SB enrollment state
 # persists across runs but never touches the system-wide file. Delete it to
 # factory-reset the virtual NVRAM.
-[[ -f "$VARS" ]] || cp "$VARS_SRC" "$VARS"
-chmod u+w "$VARS"
+if [[ "${UBOOT:-0}" -ne 1 ]]; then
+    [[ -f "$VARS" ]] || cp "$VARS_SRC" "$VARS"
+    chmod u+w "$VARS"
+fi
 
 # What the firmware is given to boot from.
 #
@@ -199,11 +265,16 @@ else
     fi
 fi
 
+# KVM only runs a guest of the host's own architecture.
+HOST_ARCH=$(uname -m)
+GUEST_ARCH=x86_64
+[[ "${AA64:-0}" -eq 1 ]] && GUEST_ARCH=aarch64
 ACCEL=()
-if [[ -w /dev/kvm ]]; then
+if [[ -w /dev/kvm && "$HOST_ARCH" == "$GUEST_ARCH" ]]; then
     ACCEL=(-enable-kvm -cpu host)
 else
-    echo "note: /dev/kvm not writable, running under TCG (slow)" >&2
+    echo "note: running under TCG (slow)" >&2
+    [[ "${AA64:-0}" -eq 1 ]] && ACCEL=(-cpu max)
 fi
 
 CONSOLE=(-serial stdio)
@@ -219,6 +290,16 @@ if [[ "$HEADLESS" -eq 1 ]]; then
         -serial "file:$SERIAL_LOG"
         -monitor "unix:$MON_SOCK,server,nowait"
     )
+    # A machine with one serial port (virt), when something must type into
+    # it too: the port is the FIFO pair SERIAL_PIPE.in/.out, and the caller
+    # reads the log from .out.
+    if [[ -n "${SERIAL_PIPE:-}" ]]; then
+        CONSOLE=(
+            -display none
+            -serial "pipe:$SERIAL_PIPE"
+            -monitor "unix:$MON_SOCK,server,nowait"
+        )
+    fi
 fi
 
 # SeaBIOS takes no pflash and writes no debug port, and i440fx is the machine
@@ -233,8 +314,27 @@ FIRMWARE=(
 if [[ "${BIOS:-0}" -eq 1 ]]; then
     FIRMWARE=(-machine pc)
 fi
+# virt has no debug port, no PS/2 and no VGA: the firmware's own log goes to
+# the serial console with ours, the keyboard is USB, and ramfb is the GOP.
+# Its drives are virtio by default.
+QEMU=qemu-system-x86_64
+if [[ "${AA64:-0}" -eq 1 ]]; then
+    QEMU=qemu-system-aarch64
+    FIRMWARE=(
+        -machine virt
+        -drive if=pflash,format="$(fw_format "$CODE")",readonly=on,file="$CODE"
+        -drive if=pflash,format="$(fw_format "$VARS")",file="$VARS"
+        -device qemu-xhci -device usb-kbd -device ramfb
+    )
+    if [[ "${UBOOT:-0}" -eq 1 ]]; then
+        FIRMWARE=(
+            -machine virt -bios "$UBOOT_BIN"
+            -device qemu-xhci -device usb-kbd -device ramfb
+        )
+    fi
+fi
 
-exec qemu-system-x86_64 \
+exec "$QEMU" \
     -name falcon-boot \
     "${FIRMWARE[@]}" \
     -m "$QEMU_MEM" \

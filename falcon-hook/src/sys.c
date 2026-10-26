@@ -1,9 +1,10 @@
-/* falcon-hook: startup and system calls, x86 Linux, in either width. See
- * sys.h.
+/* falcon-hook: startup and system calls, Linux on x86-64, i686 and
+ * AArch64. See sys.h.
  *
- * The hook is built twice, x86-64 and i686, because it runs inside the
- * booted kernel's initramfs and has to be the kernel's width: falcon-bios
- * boots 32-bit kernels as well as 64-bit ones (DESIGN Section 6.4).
+ * The hook is built three times, because it runs inside the booted kernel's
+ * initramfs and has to be the kernel's architecture and width: falcon-bios
+ * boots 32-bit kernels as well as 64-bit ones, and the AArch64 loader arm64
+ * ones (DESIGN Section 6.4).
  * Everything above this file is the same source for both. What
  * differs is how a system call is made and how the process starts, and each
  * of those is one short block below; <asm/unistd.h> gives the right numbers
@@ -58,8 +59,31 @@ static long sc6(long n, long a, long b, long c, long d, long e, long f)
  * fails to open with EOVERFLOW. */
 #define O_LARGE 0100000
 
+#elif defined(__aarch64__)
+
+/* svc #0 with the number in x8 and the arguments in x0-x5. */
+static long sc6(long n, long a, long b, long c, long d, long e, long f)
+{
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    register long x5 __asm__("x5") = f;
+
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
+                     : "memory");
+    return x0;
+}
+
+/* The kernel opens every file large on a 64-bit architecture. */
+#define O_LARGE 0
+
 #else
-#error "falcon-hook is built for x86-64 and i686 only"
+#error "falcon-hook is built for x86-64, i686 and AArch64 only"
 #endif
 
 #define SC(n, a, b, c, d, e, f) \
@@ -181,8 +205,8 @@ void sys_exit(int code)
 
 /* The process entry point: the kernel starts PID 1 here with argc, argv and
  * envp on the stack. The stack is realigned for the C call, and nothing
- * returns from it. The pointer to them travels in rdi on x86-64 and on the
- * stack on i686, which is each ABI's first argument. */
+ * returns from it. The pointer to them travels in rdi on x86-64, x0 on
+ * AArch64 and on the stack on i686, which is each ABI's first argument. */
 void hook_start(long *sp) __attribute__((used, noreturn));
 
 void hook_start(long *sp)
@@ -194,7 +218,17 @@ void hook_start(long *sp)
     sys_exit(hook_main(argc, argv, envp));
 }
 
-#if defined(__x86_64__)
+#if defined(__aarch64__)
+__asm__(".text\n"
+        ".globl _start\n"
+        "_start:\n"
+        "    mov x29, #0\n"
+        "    mov x30, #0\n"
+        "    mov x0, sp\n"
+        "    and sp, x0, #-16\n"
+        "    bl hook_start\n"
+        "    brk #0\n");
+#elif defined(__x86_64__)
 __asm__(".text\n"
         ".globl _start\n"
         "_start:\n"

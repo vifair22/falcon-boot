@@ -455,7 +455,7 @@ static void test_list_empty(void **state)
     l.rows = g_rows;
     l.count = 0;
     assert_int_equal(tui_list_run(&l, (int *)0), -1);
-    assert_true(screen_has("(no ISOs found on the exFAT partition)"));
+    assert_true(screen_has("(no ISOs found in the ISO library)"));
 }
 
 /* ---- the probe ---- */

@@ -1,6 +1,7 @@
 #include <media/shelf.h>
 
 #include <crypto/crypto.h>
+#include <pe/pe.h>
 #include <lib/string.h>
 #include <lib/ucs2.h>
 
@@ -99,6 +100,43 @@ int shelf_collect(shelf_list *s, fs_vol *fs)
 /* Case-folded ASCII compare over the raw UCS-2 name: mkstick writes these
  * names and they are ASCII by construction, so a name that is not cannot be
  * the appliance. */
+/* The PE machine of an image's head; 0 when it cannot be had. */
+static uint16_t uki_machine(shelf_list *s, fs_vol *fs, const fs_dirent *ent)
+{
+    uint64_t fsize;
+    uint64_t have;
+    pe_hdr h;
+
+    if (fs_file_open(fs, &s->file, ent) != FS_OK)
+        return 0;
+    fsize = fs_file_size(&s->file);
+    have = fsize < (uint64_t)SHELF_HEAD_WINDOW ? fsize
+                                               : (uint64_t)SHELF_HEAD_WINDOW;
+    if (fs_file_read(&s->file, 0, have, s->head) != FS_OK ||
+        pe_parse(s->head, (size_t)have, &h) != PE_OK ||
+        h.magic != PE_MAGIC_PE32P)
+        return 0;
+    return h.machine;
+}
+
+size_t shelf_keep_machine(shelf_list *s, fs_vol *fs, uint16_t machine)
+{
+    size_t i;
+    size_t kept = 0;
+
+    for (i = 0; i < s->n; i++) {
+        uint16_t m = uki_machine(s, fs, &s->uki[i].ent);
+
+        if ((m == PE_MACHINE_AMD64 || m == PE_MACHINE_ARM64) && m != machine)
+            continue;
+        if (kept != i)
+            s->uki[kept] = s->uki[i];
+        kept++;
+    }
+    s->n = kept;
+    return kept;
+}
+
 int shelf_is_appliance(const fs_dirent *e)
 {
     static const char want[] = SHELF_APPLIANCE_PREFIX;

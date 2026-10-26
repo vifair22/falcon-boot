@@ -5,6 +5,8 @@
  * a byte offset inside a zero-filled "disk", with a /.falcon file written
  * into its root. Every way the finder can be told "not this one" is walked,
  * because each of them is a stick that is not the one the loader booted.
+ * One more is a FAT32 library off a fixture image (mk-test-fat.sh), whose
+ * record carries g_id.
  */
 
 #include "synth.h"
@@ -16,6 +18,7 @@
 #include <stdint.h>
 #include <cmocka.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #include <ident/identfs.h>
@@ -160,6 +163,53 @@ static void test_extfind_finds_the_library(void **state)
     synth_free(&sv);
 }
 
+/* The FAT32 library mk-test-fat.sh builds, as `mkstick create --p2-fs
+ * fat32` makes one, read from a FILE at the partition's offset: the map's
+ * readers find a FAT library as they find an exFAT one. */
+#define FAT_LIBRARY "build/test-fat32-library.img"
+
+typedef struct {
+    FILE    *fp;
+    uint64_t base;
+} file_disk;
+
+static int file_read(void *ctx, uint64_t off, uint64_t len, void *buf)
+{
+    const file_disk *d = ctx;
+    uint8_t *out = buf;
+
+    while (len > 0 && off < d->base) {
+        *out++ = 0;
+        off++;
+        len--;
+    }
+    if (len == 0)
+        return 0;
+    if (fseek(d->fp, (long)(off - d->base), SEEK_SET) != 0 ||
+        fread(out, 1, (size_t)len, d->fp) != (size_t)len)
+        return -1;
+    return 0;
+}
+
+static void test_extfind_fat_library(void **state)
+{
+    file_disk d;
+    extmap_hdr h;
+
+    (void)state;
+    d.fp = fopen(FAT_LIBRARY, "rb");
+    assert_non_null(d.fp);
+    d.base = (uint64_t)PART_LBA * 512u;
+    map_for(&h, g_id);
+    assert_int_equal(extmap_find_on_disk(&h, file_read, &d, 512, &g_s),
+                     EXTMAP_OK);
+    assert_null(g_s.vol.ops);
+    h.install_id[0] ^= 1u;
+    assert_int_not_equal(extmap_find_on_disk(&h, file_read, &d, 512, &g_s),
+                         EXTMAP_OK);
+    fclose(d.fp);
+}
+
 static void test_extfind_other_disks(void **state)
 {
     synth_vol sv;
@@ -233,6 +283,7 @@ int run_extfind_tests(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_extfind_names),
         cmocka_unit_test(test_extfind_finds_the_library),
+        cmocka_unit_test(test_extfind_fat_library),
         cmocka_unit_test(test_extfind_other_disks),
     };
 

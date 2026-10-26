@@ -174,7 +174,7 @@ static void sign_all(const stick_parts *parts, int confirmed,
     for (i = 0; i < g_cand_n; i++)
         need_dev |= (g_cand[i].shape == SGN_PAYLOAD_NONE);
     if (need_dev) {
-        if (exfat_uuid(parts->p2, dev, sizeof(dev)) != 0) {
+        if (p2_uuid(parts->p2, dev, sizeof(dev)) != 0) {
             say("ERROR: could not read p2's volume serial; the signed cmdline\n"
                 "       would have no way to name the partition to boot "
                 "from.\n");
@@ -262,7 +262,6 @@ static void sign_all(const stick_parts *parts, int confirmed,
                     (char *)"--cert", g_keys.cert,
                     (char *)"--iso-path", rel_arg,
                     (char *)"--dev", dev_arg,
-                    (char *)"--stub", (char *)STUB_PATH,
                     NULL
                 };
 

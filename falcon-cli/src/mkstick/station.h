@@ -20,22 +20,25 @@
 #include <mkstick/records.h>
 #include <mkstick/stationcore.h>
 
+/* --arch, which every station command that can act on another machine's
+ * disk takes: sets the station's architecture (stationcore.h, stn_names),
+ * or refuses a value that is not x64 or aa64. */
+cli_status stn_arch_option(const cli_args *a);
+
 #define STN_MAX_DISKS 8u
 #define STN_MAX_FOUND 32u
 
 /* The files a station carries (DESIGN Section 12). */
-#define STN_ESP_DIR       "EFI/falcon"
-#define STN_ESP_SHIM      "shimx64.efi"
+#define STN_ESP_SHIM      (stn_n()->shim)
 /* The loader's name is shim's next stage when shim is there, and
  * stationcore.h's STN_LOADER_NOSHIM when it is not. */
 #define STN_ESP_CERT      "falcon-boot.cer"
 /* The removable-media path, where an install without shim puts the jumper
  * (apps/esp-jump), and which its firmware entry names. */
-#define STN_ESP_BOOT_DIR  "EFI/BOOT"
-#define STN_ESP_JUMP      "BOOTX64.EFI"
-#define STN_ESP_JUMP_PATH "\\EFI\\BOOT\\BOOTX64.EFI"
+#define STN_ESP_JUMP      (stn_n()->jump)
+#define STN_ESP_JUMP_PATH (stn_n()->jump_path)
 /* Beside the install's backup file: the BOOTX64.EFI the jumper replaced. */
-#define STN_JUMP_BACKUP_EXT ".BOOTX64.EFI"
+#define STN_JUMP_BACKUP_EXT (stn_n()->jump_backup_ext)
 #define STN_ESP_MEMTEST   "memtest.efi"
 #define STN_BIOS_MEMTEST  "MEMTEST.BIN"
 #define STN_FW_LABEL      "falcon"

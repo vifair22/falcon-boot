@@ -19,12 +19,14 @@ falcon-boot is written from the firmware up in C: its own UEFI loader, its
 own BIOS loader, its own filesystem, LUKS2 and Windows-image code. It is
 GPL-3.0-or-later.
 
+Just want a bootable stick? Jump to [Quick start](#quick-start).
+
 ## One loader, five forms
 
 | form | what it is | runs on |
 |---|---|---|
 | **The stick** | A USB stick with four partitions: the boot partition, an exFAT ISO library, an encrypted shelf of personal-OS images, and an encrypted root for that OS (Manual Section 10.1). | UEFI on x86-64 and AArch64; BIOS on i586 and later, 32-bit machines included |
-| **The station** | falcon installed on a machine's own disk as its boot loader, beside what is already there: a boot list with a countdown, Windows Boot Manager, other firmware entries, memtest86+, the personal OS, and on UEFI a TOTP code released by the TPM only while the firmware and boot chain are what they were at enrollment, to compare with an authenticator before typing the passphrase (Manual Section 7). | UEFI on x86-64 and AArch64; BIOS on i586 and later |
+| **The station** | falcon installed on a machine's own disk as its boot loader, beside what is already there: a boot list with a countdown, Windows Boot Manager, other firmware entries, a memory test (memtest86+; PassMark MemTest86 on AArch64), the personal OS, and on UEFI a TOTP code released by the TPM only while the firmware and boot chain are what they were at enrollment, to compare with an authenticator before typing the passphrase (Manual Section 7). | UEFI on x86-64 and AArch64; BIOS on i586 and later |
 | **station-legacy** | The BIOS station plus falcon jump's drivers, for a machine whose BIOS cannot boot a CD, a USB stick or a CF card (Manual Section 7.7). | BIOS, i586 and later |
 | **falcon jump** | A 1.44 MB boot floppy with its own IDE CD, USB (UHCI, OHCI, EHCI) and PC Card drivers: it boots the CD drive, a falcon stick on USB or a CompactFlash card on machines whose BIOS cannot (Manual Section 9). | BIOS, i586 and later |
 | **The signing appliance** | A small Linux image on the stick that signs media with the stick's own key, so it boots with Secure Boot on. Started from the menu; no other computer needed (Manual Section 4.2). | UEFI |
@@ -126,11 +128,12 @@ Section 3.1). `docs/Manual.md` is the full reference: the menu, every
 route, blessing, the personal OS, the station and `STATION.INI`, jump, every
 `falcon-boot-mkstick` command, and what to do on each failure page.
 
-The personal OS itself is a separate project:
-[archusb](https://git.airies.net/vifair22/archusb) holds an Arch install's
-build runbook and the OS side of the passphrase handoff as a mkinitcpio
-hook, and [thinkpad-t430](https://git.airies.net/vifair22/thinkpad-t430)
-the same for Gentoo with systemd, as a dracut module.
+The personal OS is your own install, not part of this project.
+[docs/personal-os.md](docs/personal-os.md) is the guide: the small contract
+an OS meets to boot from the shelf (a signed UKI and a one-file initramfs
+drop-in for the passphrase handoff), a worked Arch build with mkinitcpio, the
+dracut equivalent for other systemd distributions, and the rest left to your
+distribution's normal tooling.
 
 ![falcon jump's menu](docs/img/jump.png)
 
@@ -201,7 +204,8 @@ cell that passes on `master` no longer does
 ```
 apps/              the loaders: stick/, station/, esp-jump/, station-legacy/, jump/
 falcon-core/       firmware-free libraries every other component links:
-                   crypto, TPM, the exFAT, ext4, FAT, ISO9660 and UDF drivers,
+                   crypto, TPM, the exFAT, ext4, FAT, ISO9660, UDF, btrfs
+                   and xfs drivers,
                    LUKS2, partition tables, the PE walker, boot predictions,
                    media logic, WIM, the manifest, the screen layout
 falcon-efi/        the UEFI loader (x86-64 and AArch64 PE32+) and its QEMU/OVMF rigs

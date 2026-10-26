@@ -36,6 +36,7 @@ STATION_EFI += $(CORE_LIBC) $(CORE_UCS2)
 $(eval $(call efi_app,station,falcon-boot-station,$(STATION_EFI)))
 
 $(EFI_OBJ)/$(STATION)/efi_main.o $(EFI_OBJ)/$(STATION)/efi_sbat.o: build/version.h
+$(EFI_AA64_OBJ)/$(STATION)/efi_main.o $(EFI_AA64_OBJ)/$(STATION)/efi_sbat.o: build/version.h
 
 # The routes: POS off the shelves, VBR and MBR (chain.c) with the drive swap,
 # the one resident, and MEM through linux.c. No ISO scan, and so neither

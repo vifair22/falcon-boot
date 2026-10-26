@@ -7,7 +7,9 @@
  * before anything is chosen:
  *
  *   boots    whether any falcon-bios route can reach the medium. NO is the
- *            row's {EFI ONLY}. Two ways in, and NO only when NEITHER can:
+ *            row's {EFI ONLY}, or {ARM64 ONLY} when the medium's only UEFI
+ *            loader is ARM64's (uefiboot_image_in, asked as an x86-64
+ *            machine). Two ways in, and NO only when NEITHER can:
  *
  *              1. Its own BIOS boot image, off the virtual CD: the El Torito
  *                 entry elt_bios_entry picks (media/eltorito.h). No
@@ -76,7 +78,9 @@ typedef enum {
 } biosboot_answer;
 
 typedef struct {
-    biosboot_answer boots;     /* NO: {EFI ONLY} */
+    biosboot_answer boots;     /* NO: {EFI ONLY}, or {ARM64 ONLY} */
+    uint8_t         arm64;     /* with boots NO: only an ARM64 machine's
+                                  UEFI can, its loader alone on the medium */
     biosboot_answer needs64;   /* YES: {64-BIT ONLY}, where there is no LM */
 } biosboot_result;
 

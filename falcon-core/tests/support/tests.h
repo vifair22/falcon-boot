@@ -78,6 +78,8 @@ int run_bsdmd_tests(void);
 int run_xpsetup_tests(void);
 int run_eltorito_tests(void);
 int run_fat_tests(void);
+int run_btrfs_tests(void);
+int run_xfs_tests(void);
 int run_medium_tests(void);
 int run_bootfs_tests(void);
 int run_uefiboot_tests(void);

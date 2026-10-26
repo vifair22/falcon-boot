@@ -132,6 +132,18 @@ GLOBAL_GUID=8be4df61-93ca-11d2-aa0d-00e098032b8c
 BOOTMGFW='\EFI\Microsoft\Boot\bootmgfw.efi'
 FALCON_SHIM='\EFI\falcon\shimx64.efi'
 TIMEOUT=240
+# The architecture the aa64- cases switch to (set_arch): the disks' names
+# and contents, the bus the disk is on, the firmware, the names a case
+# reads, and SCALE, which stretches every wait for an emulated machine.
+ARCH=x64
+A_SUF=
+ARCH_ARGS=()
+BUS=sata
+UP=X64
+LOW=x64
+SCALE=1
+MEMTEST_LABEL="Memory test (memtest86+)"
+DISK_BOOT_NAME="UEFI QEMU HARDDISK"
 # The NVMe controller's PCI slot, fixed so falcon's Boot0001 can name it.
 NVME_SLOT=5
 
@@ -229,7 +241,7 @@ part_facts() {      # part_facts DEV-OR-IMG N
 }
 
 build_gpt() {
-    local img=$R/gpt.img
+    local img=$R/gpt$A_SUF.img
 
     rm -f "$img"
     truncate -s 256M "$img"
@@ -243,8 +255,9 @@ build_gpt() {
     attach "$img"
     make_shelf "${LOOP}p3"
     detach
-    install_station gpt "$img" --uefi --shelf 3 --memtest-efi "$STANDIN" --shim "$SHIM"
-    part_facts "$img" 1 > "$R/gpt.esp"
+    install_station "gpt$A_SUF" "$img" --uefi --shelf 3 --memtest-efi "$STANDIN" \
+        --shim "$SHIM" "${ARCH_ARGS[@]}"
+    part_facts "$img" 1 > "$R/gpt$A_SUF.esp"
 }
 
 build_4kn() {
@@ -333,7 +346,7 @@ build_mbr() {
 }
 
 build_noshim() {
-    local img=$R/noshim.img
+    local img=$R/noshim$A_SUF.img
 
     rm -f "$img"
     truncate -s 256M "$img"
@@ -343,9 +356,9 @@ build_noshim() {
     attach "$img"
     make_shelf "${LOOP}p2"
     detach
-    install_station noshim "$img" --uefi --shelf 2 \
-        --memtest-efi "$STANDIN"
-    part_facts "$img" 1 > "$R/noshim.esp"
+    install_station "noshim$A_SUF" "$img" --uefi --shelf 2 \
+        --memtest-efi "$STANDIN" "${ARCH_ARGS[@]}"
+    part_facts "$img" 1 > "$R/noshim$A_SUF.esp"
 }
 
 # noshim's disk with another system's \EFI\BOOT\BOOTX64.EFI already on the
@@ -399,7 +412,7 @@ mon() { printf '%s\n' "$*" | socat - "UNIX-CONNECT:$R/mon.sock" >/dev/null 2>&1 
 
 wait_for() {    # wait_for PATTERN SECONDS
     local i
-    for (( i = 0; i < $2 * 10; i++ )); do
+    for (( i = 0; i < $2 * 10 * SCALE; i++ )); do
         log_text "$R/serial.log" | grep -aqF -- "$1" && return 0
         kill -0 "$QPID" 2>/dev/null || { log_text "$R/serial.log" |
             grep -aqF -- "$1"; return; }
@@ -455,6 +468,10 @@ def prefix(port):
         # PciRoot(0)/Pci(0x1f,0x2)/Sata(port,0xFFFF,0): q35's AHCI.
         pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
         pre += struct.pack("<BBHHHH", 3, 0x12, 10, port, 0xFFFF, 0)
+    elif bus == "virtio":
+        # PciRoot(0)/Pci(slot,0): virt's virtio-blk, which AAVMF names by
+        # its PCI function alone.
+        pre += struct.pack("<BBHBB", 1, 1, 6, 0, int(slot))
     else:
         # PciRoot(0)/Pci(slot,0)/NVMe(0x1,00-00-00-00-00-00-00-00).
         pre += struct.pack("<BBHBB", 1, 1, 6, 0, int(slot))
@@ -516,12 +533,20 @@ boot_once() {
     local fwargs=() second=()
     if [[ $bus == nvme ]]; then
         dev="nvme,drive=d0,serial=falcon4k,addr=$NVME_SLOT,logical_block_size=4096,physical_block_size=4096,bootindex=0"
+    elif [[ $bus == virtio ]]; then
+        dev="virtio-blk-pci,drive=d0,addr=$NVME_SLOT,bootindex=0"
     else
         dev="ide-hd,drive=d0,bus=ide.0,bootindex=0"
     fi
     case $fw in
     uefi|uefi-sb)
-        if [[ $fw == uefi ]]; then
+        if [[ $ARCH == aa64 && $fw == uefi ]]; then
+            code=$(aavmf_find CODE plain)
+            vars=$(aavmf_find VARS plain)
+        elif [[ $ARCH == aa64 ]]; then
+            code=$(aavmf_find CODE secboot)
+            vars=build/mok-test/AAVMF_VARS.secboot.mok.fd
+        elif [[ $fw == uefi ]]; then
             code=$(ovmf_find CODE plain)
             vars=$(ovmf_find VARS plain)
         else
@@ -543,6 +568,11 @@ boot_once() {
         fwargs=(-machine q35
                 -drive "if=pflash,format=raw,readonly=on,file=$code"
                 -drive "if=pflash,format=raw,file=$R/vars.fd")
+        [[ $ARCH == aa64 ]] &&
+            fwargs=(-machine virt
+                    -drive "if=pflash,format=$(fw_format "$code"),readonly=on,file=$code"
+                    -drive "if=pflash,format=$(fw_format "$vars"),file=$R/vars.fd"
+                    -device qemu-xhci -device usb-kbd -device ramfb)
         ;;
     bios) fwargs=(-machine pc) ;;
     esac
@@ -554,8 +584,10 @@ boot_once() {
                 -device "ide-hd,drive=d1,bus=ide.1,bootindex=1")
     fi
     rm -f "$R/serial.log" "$R/mon.sock"
-    timeout "$TIMEOUT" qemu-system-x86_64 "${fwargs[@]}" -m 1024 \
-        -enable-kvm -cpu host -display none -net none \
+    local qemu=qemu-system-x86_64 accel=(-enable-kvm -cpu host)
+    [[ $ARCH == aa64 ]] && { qemu=qemu-system-aarch64; accel=(-cpu max); }
+    timeout "$(( TIMEOUT * SCALE ))" "$qemu" "${fwargs[@]}" -m 1024 \
+        "${accel[@]}" -display none -net none \
         -drive "if=none,id=d0,format=raw,file=$R/boot.img" -device "$dev" \
         "${second[@]}" \
         -serial "file:$R/serial.log" \
@@ -605,7 +637,7 @@ unlock() {      # unlock ID SECONDS
 case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     local c=$1 fw=$2
     WHY=
-    boot "$fw" "$R/gpt.img" sata "$(cat "$R/gpt.esp")" 1
+    boot "$fw" "$R/gpt$A_SUF.img" "$BUS" "$(cat "$R/gpt$A_SUF.esp")" 1
     wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     # OVMF's terminal gets the countdown line before the rows; by the
@@ -620,7 +652,7 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
     [[ -z "$WHY" ]] &&
         log_text "$R/serial.log" | grep -aqE 'Windows Boot Manager( {2,}|$)' &&
         WHY="the firmware entry is a row of its own beside the INI's"
-    [[ -z "$WHY" ]] && { wait_for "Memory test (memtest86+)" 5 || WHY="no memtest row"; }
+    [[ -z "$WHY" ]] && { wait_for "$MEMTEST_LABEL" 5 || WHY="no memtest row"; }
     [[ -z "$WHY" ]] && { wait_for "booting: Windows Boot Manager (disk gpt:" 15 ||
         WHY="the default was not Windows"; }
     [[ -z "$WHY" ]] && { wait_for "restarting into it" 10 || WHY="no NXT page"; }
@@ -633,8 +665,8 @@ case_uefi_default() {   # case_uefi_default CASE FIRMWARE
 case_uefi_pos() {       # case_uefi_pos CASE FIRMWARE
     local c=$1 fw=$2 id
     WHY=
-    id=$(install_id "$R/gpt.img")
-    boot "$fw" "$R/gpt.img" sata "$(cat "$R/gpt.esp")" 1
+    id=$(install_id "$R/gpt$A_SUF.img")
+    boot "$fw" "$R/gpt$A_SUF.img" "$BUS" "$(cat "$R/gpt$A_SUF.esp")" 1
     wait_for "Booting in 5 s" 90 || WHY="no countdown"
     if [[ -z "$WHY" ]]; then
         # Up stops the count and moves from the default (Windows) to the
@@ -781,7 +813,7 @@ case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
     # count's second line every row has been drawn.
     [[ -z "$WHY" ]] && { wait_for "Booting in 4 s" 5 || WHY="the count stopped"; }
     [[ -z "$WHY" ]] && { wait_for "personal.efi" 5 || WHY="no row for the INI's [linux]"; }
-    [[ -z "$WHY" ]] && { wait_for "Memory test (memtest86+)" 5 || WHY="no memtest row"; }
+    [[ -z "$WHY" ]] && { wait_for "$MEMTEST_LABEL" 5 || WHY="no memtest row"; }
     [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
         WHY="the default was not the shelf's UKI"; }
     [[ -z "$WHY" ]] && unlock "$id" 30
@@ -794,16 +826,16 @@ case_mbr_uefi() {       # case_mbr_uefi CASE FIRMWARE
 case_noshim() {         # case_noshim CASE FIRMWARE
     local c=$1 fw=$2 id
     WHY=
-    id=$(install_id "$R/noshim.img")
-    ENTRY='\EFI\BOOT\BOOTX64.EFI' boot "$fw" "$R/noshim.img" sata \
-        "$(cat "$R/noshim.esp")" 0
+    id=$(install_id "$R/noshim$A_SUF.img")
+    ENTRY="\\EFI\\BOOT\\BOOT$UP.EFI" boot "$fw" "$R/noshim$A_SUF.img" "$BUS" \
+        "$(cat "$R/noshim$A_SUF.esp")" 0
     wait_for "Booting in 5 s" 90 ||
         WHY="no countdown"
     [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
         WHY="the default was not the shelf's UKI"; }
     [[ -z "$WHY" ]] && unlock "$id" 30
     halt
-    result "$c" "$WHY" "the falcon entry started the jumper, the jumper falconx64.efi; the default counted down to the prompt; UKI got both credentials"
+    result "$c" "$WHY" "the falcon entry started the jumper, the jumper falcon$LOW.efi; the default counted down to the prompt; UKI got both credentials"
 }
 
 # noshim with no firmware entry for the station: the firmware boots the
@@ -812,12 +844,12 @@ case_noshim() {         # case_noshim CASE FIRMWARE
 case_noshim_jump() {    # case_noshim_jump CASE FIRMWARE
     local c=$1 fw=$2 id n
     WHY=
-    id=$(install_id "$R/noshim.img")
-    grep -q 'BOOTX64.EFI, the jumper to falconx64.efi' "$R/noshim.install" ||
+    id=$(install_id "$R/noshim$A_SUF.img")
+    grep -q "BOOT$UP.EFI, the jumper to falcon$LOW.efi" "$R/noshim$A_SUF.install" ||
         WHY="the installer did not write the jumper"
     if [[ -z "$WHY" ]]; then
-        ENTRY=none boot "$fw" "$R/noshim.img" sata \
-            "$(cat "$R/noshim.esp")" 0
+        ENTRY=none boot "$fw" "$R/noshim$A_SUF.img" "$BUS" \
+            "$(cat "$R/noshim$A_SUF.esp")" 0
         # The jumper's one line, when it has one, is the reason.
         wait_for "Booting in 5 s" 90 ||
             WHY="no countdown $(log_text "$R/serial.log" |
@@ -825,7 +857,7 @@ case_noshim_jump() {    # case_noshim_jump CASE FIRMWARE
         # Counted, not grep -q: the line is near the top of a long log, and
         # a grep that stops reading there fails the pipe under pipefail.
         n=$(log_text "$R/serial.log" |
-            grep -acF 'starting Boot0001 "UEFI QEMU HARDDISK' || true)
+            grep -acF "starting Boot0001 \"$DISK_BOOT_NAME" || true)
         [[ -z "$WHY" && "$n" == 0 ]] &&
             WHY="the firmware did not boot the disk's removable-media path"
         [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 15 ||
@@ -833,7 +865,7 @@ case_noshim_jump() {    # case_noshim_jump CASE FIRMWARE
         [[ -z "$WHY" ]] && unlock "$id" 30
         halt
     fi
-    result "$c" "$WHY" "no firmware entry: BOOTX64.EFI, the jumper, started falconx64.efi; the default counted down to the prompt; UKI got both credentials"
+    result "$c" "$WHY" "no firmware entry: BOOT$UP.EFI, the jumper, started falcon$LOW.efi; the default counted down to the prompt; UKI got both credentials"
 }
 
 case_noshim_status() {
@@ -1017,32 +1049,71 @@ CASES=("$@")
            noshim-status noshim-update noshim-migrate foreign-jump
            mbr4k-bios-bad)
 
+# The AArch64 machines: the gpt and noshim disks again, with an AArch64
+# station (--arch aa64), the arm64 fixture UKI and stand-in, on virtio under
+# AAVMF. Built the first time an aa64- case asks.
+set_arch() {    # set_arch x64|aa64
+    [[ $1 == "$ARCH" ]] && return
+    ARCH=$1
+    if [[ $ARCH == aa64 ]]; then
+        A_SUF=-aa64 ARCH_ARGS=(--arch aa64) BUS=virtio UP=AA64 LOW=aa64
+        SCALE=${AA64_SCALE:-6}
+        STANDIN=build/test/standin-aa64.efi
+        STANDIN_SIGNED=build/test/standin-aa64-signed.efi
+        FIXTURE_UKI_SIGNED=build/test/fixture-uki-aa64-signed.efi
+        FALCON_SHIM='\EFI\falcon\shimaa64.efi'
+        MEMTEST_LABEL="Memory test (MemTest86)"
+        DISK_BOOT_NAME="UEFI Misc Device"
+        if [[ ! -f "$R/gpt-aa64.img" || ! -f "$R/noshim-aa64.img" ||
+              "${KEEP:-0}" != 1 ]]; then
+            make --no-print-directory "$STANDIN" "$STANDIN_SIGNED" \
+                build/bin/falcon-boot-station-aa64.efi \
+                build/bin/falcon-esp-jump-aa64.efi >/dev/null
+            echo "== installing the rig's AArch64 stations"
+            build_gpt
+            build_noshim
+        fi
+    else
+        A_SUF= ARCH_ARGS=() BUS=sata UP=X64 LOW=x64 SCALE=1
+        STANDIN=build/test/standin.efi
+        STANDIN_SIGNED=build/test/standin-signed.efi
+        FIXTURE_UKI_SIGNED=build/test/fixture-uki-signed.efi
+        FALCON_SHIM='\EFI\falcon\shimx64.efi'
+        MEMTEST_LABEL="Memory test (memtest86+)"
+        DISK_BOOT_NAME="UEFI QEMU HARDDISK"
+    fi
+}
+
 for c in "${CASES[@]}"; do
     case $c in
-    uefi-default)    case_uefi_default "$c" uefi ;;
-    uefi-sb-default) case_uefi_default "$c" uefi-sb ;;
-    uefi-pos)        case_uefi_pos "$c" uefi ;;
-    uefi-sb-pos)     case_uefi_pos "$c" uefi-sb ;;
-    4kn-uefi)        case_4kn_uefi "$c" uefi ;;
-    4kn-uefi-sb)     case_4kn_uefi "$c" uefi-sb ;;
-    4kn-bios)        case_bios "$c" "$R/4kn.img" 4 ;;
-    4kn-remove)      case_4kn_remove "$c" ;;
-    mbr4k-bios)      case_bios "$c" "$R/mbr4k.img" 3 ;;
-    mbr4k-bios-bad)  case_bios_bad "$c" "$R/mbr4k.img" ;;
-    second-nxt)      case_second "$c" uefi nxt ;;
-    second-sb-nxt)   case_second "$c" uefi-sb nxt ;;
-    second-esp)      case_second "$c" uefi esp ;;
-    second-sb-esp)   case_second "$c" uefi-sb esp ;;
-    mbr-uefi)        case_mbr_uefi "$c" uefi ;;
-    mbr-uefi-sb)     case_mbr_uefi "$c" uefi-sb ;;
-    noshim-uefi)     case_noshim "$c" uefi ;;
-    noshim-uefi-sb)  case_noshim "$c" uefi-sb ;;
-    noshim-jump-uefi)    case_noshim_jump "$c" uefi ;;
-    noshim-jump-uefi-sb) case_noshim_jump "$c" uefi-sb ;;
-    noshim-status)   case_noshim_status "$c" ;;
-    noshim-update)   case_noshim_update "$c" ;;
-    noshim-migrate)  case_noshim_migrate "$c" uefi-sb ;;
-    foreign-jump)    case_foreign_jump "$c" ;;
+    aa64-*) set_arch aa64; c=${c#aa64-}; label=aa64-$c ;;
+    *)      set_arch x64; label=$c ;;
+    esac
+    case $c in
+    uefi-default)    case_uefi_default "$label" uefi ;;
+    uefi-sb-default) case_uefi_default "$label" uefi-sb ;;
+    uefi-pos)        case_uefi_pos "$label" uefi ;;
+    uefi-sb-pos)     case_uefi_pos "$label" uefi-sb ;;
+    4kn-uefi)        case_4kn_uefi "$label" uefi ;;
+    4kn-uefi-sb)     case_4kn_uefi "$label" uefi-sb ;;
+    4kn-bios)        case_bios "$label" "$R/4kn.img" 4 ;;
+    4kn-remove)      case_4kn_remove "$label" ;;
+    mbr4k-bios)      case_bios "$label" "$R/mbr4k.img" 3 ;;
+    mbr4k-bios-bad)  case_bios_bad "$label" "$R/mbr4k.img" ;;
+    second-nxt)      case_second "$label" uefi nxt ;;
+    second-sb-nxt)   case_second "$label" uefi-sb nxt ;;
+    second-esp)      case_second "$label" uefi esp ;;
+    second-sb-esp)   case_second "$label" uefi-sb esp ;;
+    mbr-uefi)        case_mbr_uefi "$label" uefi ;;
+    mbr-uefi-sb)     case_mbr_uefi "$label" uefi-sb ;;
+    noshim-uefi)     case_noshim "$label" uefi ;;
+    noshim-uefi-sb)  case_noshim "$label" uefi-sb ;;
+    noshim-jump-uefi)    case_noshim_jump "$label" uefi ;;
+    noshim-jump-uefi-sb) case_noshim_jump "$label" uefi-sb ;;
+    noshim-status)   case_noshim_status "$label" ;;
+    noshim-update)   case_noshim_update "$label" ;;
+    noshim-migrate)  case_noshim_migrate "$label" uefi-sb ;;
+    foreign-jump)    case_foreign_jump "$label" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

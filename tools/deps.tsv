@@ -1,13 +1,17 @@
 # tool	check	debian package	group	need	purpose
-# package: space-separated when one tool needs several; a (pip), (base) or
-#          (source) suffix marks one apt does not install, (source) being
-#          built from its own repository.
+# package: space-separated when one tool needs several; a (pip), (base),
+#          (source), (release) or (download) suffix marks one apt does not
+#          install, (source) being built from its own repository, (release) a
+#          pinned upstream release the Dockerfile downloads and checks, and
+#          (download) a Debian package fetched and unpacked, not installed.
 # check: cmd:<prog>[|<alt>] (on PATH), pkgconf:<name> (pkg-config finds it),
 #        file:<path>[|<alt>] (one exists), m32 (gcc -m32 has a libgcc).
 # Rendered into docs/Manual.md 13.1 by `tools/deps.sh markdown`; checked by
 # `make check-tools` and, against the Dockerfile and the Manual, by
 # `make check-deps`.
 x86_64-w64-mingw32-gcc	cmd:x86_64-w64-mingw32-gcc	gcc-mingw-w64-x86-64	build	required	the UEFI images, winjump.exe and the x64 vdisk driver (or build in the harness image)
+aarch64-w64-mingw32-clang	cmd:aarch64-w64-mingw32-clang	llvm-mingw(release)	build	optional	the AArch64 UEFI images and the ARM64 winjump: llvm-mingw 20261020, ucrt, after gcc-mingw on PATH (its x86_64- and i686- wrappers are clang) (or build in the harness image)
+arm64 libc, libgcc and headers	file:/usr/include/aarch64-linux-gnu/asm/unistd.h	libc6-dev:arm64 libgcc-14-dev:arm64	build	optional	the arm64 Linux programs (falcon-hook, the fixture UKI's init), built by llvm-mingw's clang and ld.lld; dpkg --add-architecture arm64 (or the harness image)
 gcc	cmd:gcc	build-essential	build	required	host tools, tests and the BIOS loader (CC_HOST)
 make	cmd:make	make	build	required	the one build
 pkg-config	cmd:pkg-config	pkg-config	build	required	finds cmocka for the test binaries
@@ -20,13 +24,17 @@ cpio	cmd:cpio	cpio	build	required	the initrds the apps' fixtures carry
 i686-w64-mingw32-gcc	cmd:i686-w64-mingw32-gcc	gcc-mingw-w64-i686	build	optional	make bios: the 32-bit winjump and vdisk driver (or the harness image)
 mtools	cmd:mcopy	mtools	build	optional	make jump and station install write FAT with mtools
 sd-stub	file:/usr/lib/systemd/boot/efi/linuxx64.efi.stub	systemd-boot-efi	build	optional	the stub a UKI is built on (sign uki, the fixture UKI, the appliance)
+arm64 sd-stub	file:/usr/lib/systemd/boot/efi/linuxaa64.efi.stub	systemd-boot-efi:arm64	build	optional	the stub an arm64 kernel's UKI is built on
+arm64 sbsign, sbverify	file:/opt/arm64-sbsigntool/usr/bin/sbsign	sbsigntool:arm64(download) libssl3t64:arm64 libuuid1:arm64	build	optional	the AArch64 appliance image's signer, unpacked to /opt/arm64-sbsigntool, with its arm64 libraries
 zstd	cmd:zstd	zstd	build	optional	the appliance image's initramfs
 cryptsetup	cmd:cryptsetup	cryptsetup-bin	host tools	required	mkstick create: p3's LUKS2
 openssl	cmd:openssl	openssl	host tools	required	mkstick keygen and create: the MOK keypair
 sbsign, sbverify, sbattach	cmd:sbsign	sbsigntool	host tools	required	MOK signatures, their check, and stripping one
 mkfs.exfat	cmd:mkfs.exfat	exfatprogs	host tools	required	p2
 mkfs.ext4	cmd:mkfs.ext4	e2fsprogs	host tools	required	p3 and the station partition
-mkfs.fat	cmd:mkfs.fat	dosfstools	host tools	required	p1 and a BIOS boot partition
+mkfs.fat	cmd:mkfs.fat	dosfstools	host tools	required	p1, a BIOS boot partition, and a FAT32 p2 or p3
+mkfs.btrfs	cmd:mkfs.btrfs	btrfs-progs	host tools	optional	a btrfs p3 (--p3-fs btrfs), and the btrfs fixtures
+mkfs.xfs, xfs_io	cmd:mkfs.xfs	xfsprogs	host tools	optional	an xfs p3 (--p3-fs xfs), and the xfs fixtures
 sgdisk	cmd:sgdisk	gdisk	host tools	required	GPT
 sfdisk	cmd:sfdisk	fdisk	host tools	required	MBR
 losetup, blockdev, partx	cmd:losetup	util-linux	host tools	required	images as block devices
@@ -44,6 +52,10 @@ clang-tidy	cmd:clang-tidy	clang-tidy	analyzers	optional	make analyze
 objdump, readelf	cmd:objdump	binutils	analyzers	optional	tools/check-floor.sh
 qemu-system-x86_64	cmd:qemu-system-x86_64	qemu-system-x86	rigs	optional	the UEFI rigs
 qemu-system-i386	cmd:qemu-system-i386	qemu-system-x86	rigs	optional	the BIOS rigs (SeaBIOS on an i686)
+qemu-system-aarch64	cmd:qemu-system-aarch64	qemu-system-arm	rigs	optional	the AArch64 UEFI rigs (TCG on an x86 host)
+AAVMF	file:/usr/share/AAVMF/AAVMF_CODE.fd|/usr/share/edk2/ArmVirtQemu-AARCH64/QEMU_EFI.qcow2|/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw	qemu-efi-aarch64	rigs	optional	the AArch64 rigs' firmware, plain and Secure Boot
+U-Boot	file:/usr/lib/u-boot/qemu_arm64/u-boot.bin	u-boot-qemu	rigs	optional	the devicetree rig: U-Boot's UEFI on virt
+xz	cmd:xz	xz-utils	harness	optional	unpacks the llvm-mingw release into the harness image
 qemu-img, qemu-nbd	cmd:qemu-img	qemu-utils	rigs	optional	rig disks, overlays and the station fixture disks
 OVMF	file:/usr/share/edk2/OvmfX64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_CODE.4m.fd|/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/edk2-ovmf/OVMF_CODE.fd	ovmf	rigs	optional	the UEFI rigs' firmware, plain and Secure Boot
 swtpm, swtpm_setup	cmd:swtpm	swtpm swtpm-tools	rigs	optional	the TPM rigs

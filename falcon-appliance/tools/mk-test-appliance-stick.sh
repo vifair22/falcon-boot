@@ -41,10 +41,26 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 . tools/rig-part.sh
 
+APPLIANCE_ARCH="${APPLIANCE_ARCH:-x64}"
 OUT=build/appliance
-IMG="$OUT/appliance-stick.img"
-CERT="$OUT/appliance-mok.crt"
-VARS="$OUT/OVMF_VARS.secboot.mok.fd"
+if [[ $APPLIANCE_ARCH == aa64 ]]; then
+    # The same stick for an AArch64 machine: the AArch64 appliance and
+    # fixture UKI on p3, and ISOs shaped like Fedora's arm64 media (the
+    # kernel at /images/pxeboot/vmlinuz), since Arch ships none.
+    SUFFIX=-aa64
+    VARS="$OUT/AAVMF_VARS.secboot.mok.fd"
+    VARS_TEMPLATE=build/mok-test/AAVMF_VARS.secboot.mok.fd
+    FIXTURE_KERNEL=build/fedora-kernel/aarch64/vmlinuz
+    FIXTURE_INITRD=build/test/fixture-initrd-aa64.cpio
+else
+    SUFFIX=
+    VARS="$OUT/OVMF_VARS.secboot.mok.fd"
+    VARS_TEMPLATE=
+    FIXTURE_KERNEL=build/test/fixture-vmlinuz
+    FIXTURE_INITRD=build/test/fixture-initrd.cpio
+fi
+IMG="$OUT/appliance-stick$SUFFIX.img"
+CERT="$OUT/appliance-mok$SUFFIX.crt"
 PASSFILE="$OUT/passphrase"
 
 PASS="${FALCON_TEST_PASS:-falcon-test}"
@@ -60,15 +76,12 @@ ROOT_ISO_NAME=arch-mini-root.iso
 FOLDER=Linux
 FOLDER_ISO_NAME=arch-mini-linux.iso
 
-FIXTURE_KERNEL=build/test/fixture-vmlinuz
-FIXTURE_INITRD=build/test/fixture-initrd.cpio
-
 ISO_SIZE=2G
 TOTAL_SIZE=4G
 
 MKSTICK=build/bin/falcon-boot-mkstick
-APPLIANCE_UKI="$OUT/appliance-uki.efi"
-FIXTURE_UKI=build/test/fixture-uki.efi
+APPLIANCE_UKI="$OUT/appliance-uki$SUFFIX.efi"
+FIXTURE_UKI=build/test/fixture-uki$SUFFIX.efi
 LOADER=build/bin/falcon-boot.efi
 SHIM_DIR=build/shim/bins
 
@@ -163,11 +176,19 @@ rm -f "$PASSFILE"
 # -r for Rock Ridge so the names inside survive verbatim: bsdtar (which is how
 # the bless tool reads an ISO) would otherwise see ISO9660's uppercased,
 # ";1"-suffixed forms and the /arch/boot/x86_64 fingerprint would not match.
-echo "== building $MINI_ISO (fixture kernel + initramfs, archiso layout)"
 rm -rf "$MINI_STAGE" "$MINI_ISO"
-mkdir -p "$MINI_STAGE/arch/boot/x86_64"
-cp "$FIXTURE_KERNEL" "$MINI_STAGE/arch/boot/x86_64/vmlinuz-linux"
-cp "$FIXTURE_INITRD" "$MINI_STAGE/arch/boot/x86_64/initramfs-linux.img"
+if [[ $APPLIANCE_ARCH == aa64 ]]; then
+    echo "== building $MINI_ISO (arm64 kernel + initramfs, Fedora's layout)"
+    mkdir -p "$MINI_STAGE/images/pxeboot" "$MINI_STAGE/LiveOS"
+    cp "$FIXTURE_KERNEL" "$MINI_STAGE/images/pxeboot/vmlinuz"
+    cp "$FIXTURE_INITRD" "$MINI_STAGE/images/pxeboot/initrd.img"
+    printf 'fixture\n' > "$MINI_STAGE/LiveOS/README"
+else
+    echo "== building $MINI_ISO (fixture kernel + initramfs, archiso layout)"
+    mkdir -p "$MINI_STAGE/arch/boot/x86_64"
+    cp "$FIXTURE_KERNEL" "$MINI_STAGE/arch/boot/x86_64/vmlinuz-linux"
+    cp "$FIXTURE_INITRD" "$MINI_STAGE/arch/boot/x86_64/initramfs-linux.img"
+fi
 xorriso -as mkisofs -r -J -V FALCON_MINI -o "$MINI_ISO" "$MINI_STAGE" \
     >/dev/null 2>&1
 rm -rf "$MINI_STAGE"
@@ -202,7 +223,9 @@ echo "== seeding a varstore that trusts this stick's MOK"
 # rig's own Microsoft-enrolled varstore (falcon-efi/tools/mk-test-mok.sh) is
 # the template.
 TEMPLATE=()
-if [[ ! -f "${OVMF_DIR:-/usr/share/edk2/OvmfX64}/OVMF_VARS.secboot.fd" &&
+if [[ -n $VARS_TEMPLATE ]]; then
+    TEMPLATE=(--template "$VARS_TEMPLATE")
+elif [[ ! -f "${OVMF_DIR:-/usr/share/edk2/OvmfX64}/OVMF_VARS.secboot.fd" &&
       -f build/mok-test/OVMF_VARS.secboot.mok.fd ]]; then
     TEMPLATE=(--template build/mok-test/OVMF_VARS.secboot.mok.fd)
 fi

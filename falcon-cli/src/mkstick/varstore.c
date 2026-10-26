@@ -13,7 +13,7 @@
  *
  * This command never touches a stick, never generates or reads a private key,
  * and is not part of building one. It shells out to virt-fw-vars from the
- * python venv the shim spike already creates, because writing an EFI variable
+ * one on PATH, else the venv the shim spike creates, because writing an EFI variable
  * store is not something this repo should own.
  */
 
@@ -28,6 +28,7 @@
 #include <common/util.h>
 #include <mkstick/disk.h>
 
+#define DEFAULT_PATH_TOOL "virt-fw-vars"
 #define DEFAULT_VENV_TOOL "build/shim/venv/bin/virt-fw-vars"
 #define DEFAULT_OVMF_DIR  "/usr/share/edk2/OvmfX64"
 
@@ -40,20 +41,24 @@ static const cli_opt varstore_opts[] = {
       "OVMF Secure Boot varstore to start from "
       "(default $OVMF_DIR/OVMF_VARS.secboot.fd)" },
     { "virt-fw-vars", CLI_OPT_VALUE, 0, "<path>",
-      "the virt-fw-vars executable (default " DEFAULT_VENV_TOOL ")" }
+      "the virt-fw-vars executable (default the one on PATH, else "
+      DEFAULT_VENV_TOOL ")" }
 };
 
 static cli_status varstore_run(const cli_args *a)
 {
     const char *cert = a->pos[0];
     const char *out = a->pos[1];
-    const char *tool = cli_value(a, "virt-fw-vars", DEFAULT_VENV_TOOL);
+    const char *tool = cli_value(a, "virt-fw-vars", NULL);
     const char *template_ = cli_value(a, "template", NULL);
     char derived[MKS_PATH_MAX];
     cli_status rc;
 
     if (!util_is_file(cert))
         return set_error(CLI_ERR_NOTFOUND, "no certificate at %s", cert);
+    if (tool == NULL)
+        tool = proc_exists(DEFAULT_PATH_TOOL) ? DEFAULT_PATH_TOOL
+                                              : DEFAULT_VENV_TOOL;
     if (!proc_exists(tool))
         return set_error(CLI_ERR_NOTFOUND,
                          "%s is not there; falcon-efi/tools/mk-test-mok.sh "

@@ -25,7 +25,6 @@
 
 #define P2_MNT   "/mnt/p2"
 #define SIGN_TOOL "/usr/bin/falcon-boot-sign-static"
-#define STUB_PATH "/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
 
 #define MANIFEST_PATH P2_MNT "/falcon/blessed/manifest"
 
@@ -69,7 +68,7 @@
 #define NODE_MAX 288u
 
 typedef struct {
-    char p2[NODE_MAX];    /* device node of the exFAT ISO library */
+    char p2[NODE_MAX];    /* device node of the ISO library */
     char p3[NODE_MAX];    /* device node of the LUKS2 UKI shelf */
 } stick_parts;
 
@@ -117,7 +116,7 @@ enum {
 };
 int find_stick(stick_parts *out);
 void say_block_devices(void);
-int exfat_uuid(const char *node, char *out, size_t cap);
+int p2_uuid(const char *node, char *out, size_t cap);
 
 /* run.c: the helper programs */
 int run(char *const argv[], const char *in, size_t in_len, const char *echo);

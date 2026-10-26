@@ -1,12 +1,13 @@
 # falcon-boot's release tarball as an Arch package (docs/Manual.md
 # Section 14.3). The tag pipeline builds it from the tarball it has just
-# made (tools/release/publish-arch.sh), filling pkgver and the checksum in;
-# by hand, put the tarball beside this file and set both.
+# made (tools/release/publish-arch.sh), filling pkgver and the checksums in,
+# once per architecture; by hand, put the tarball beside this file and set
+# both.
 pkgname=falcon-boot-bin
 pkgver=0.0.0
 pkgrel=1
 pkgdesc="falcon-boot's stick and station installer, with the unsigned loaders it installs"
-arch=(x86_64)
+arch=(x86_64 aarch64)
 url="https://git.airies.net/vifair22/falcon-boot"
 license=(GPL-3.0-or-later BSD-2-Clause GPL-2.0-only)
 # The required host tools of tools/deps.tsv; mtools writes FAT for
@@ -26,8 +27,10 @@ depends=(
 # bytes are what the MOK signs.
 options=(!strip !debug)
 install=falcon-boot-bin.install
-source=("falcon-boot-${pkgver}-x86_64.tar.gz")
-sha256sums=(SKIP)
+source_x86_64=("falcon-boot-${pkgver}-x86_64.tar.gz")
+source_aarch64=("falcon-boot-${pkgver}-aarch64.tar.gz")
+sha256sums_x86_64=(SKIP)
+sha256sums_aarch64=(SKIP)
 
 package() {
     cd "falcon-boot-${pkgver}"

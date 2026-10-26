@@ -7,8 +7,10 @@
 #include <media/strows.h>
 #include <pe/pe.h>
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/utsname.h>
 
 const uint8_t stn_guid_bios_boot[16] = {
     /* 21686148-6449-6E6F-744E-656564454649 */
@@ -658,6 +660,70 @@ stn_reach stn_reach_of(uint64_t end)
     if (end > STN_REACH_CHS_BYTES)
         return STN_REACH_PAST_CHS;
     return STN_REACH_OK;
+}
+
+static stn_names g_names;
+static int g_names_set;
+
+int stn_arch_set(const char *arch)
+{
+    char up[8];
+    size_t i;
+
+    if (arch == NULL || (strcmp(arch, "x64") != 0 && strcmp(arch, "aa64") != 0))
+        return -1;
+    for (i = 0; arch[i] != '\0' && i + 1u < sizeof up; i++)
+        up[i] = (char)toupper((unsigned char)arch[i]);
+    up[i] = '\0';
+    memset(&g_names, 0, sizeof g_names);
+    (void)snprintf(g_names.low, sizeof g_names.low, "%s", arch);
+    (void)snprintf(g_names.shim, sizeof g_names.shim, "shim%s.efi", arch);
+    (void)snprintf(g_names.jump, sizeof g_names.jump, "BOOT%s.EFI", up);
+    (void)snprintf(g_names.jump_path, sizeof g_names.jump_path,
+                   "\\EFI\\BOOT\\BOOT%s.EFI", up);
+    (void)snprintf(g_names.jump_backup_ext, sizeof g_names.jump_backup_ext,
+                   ".BOOT%s.EFI", up);
+    (void)snprintf(g_names.loader_noshim, sizeof g_names.loader_noshim,
+                   "falcon%s.efi", arch);
+    (void)snprintf(g_names.loader_old, sizeof g_names.loader_old,
+                   "grub%s.efi", arch);
+    (void)snprintf(g_names.loader_file, sizeof g_names.loader_file,
+                   "falcon-boot-station%s.efi",
+                   strcmp(arch, "x64") == 0 ? "" : "-aa64");
+    (void)snprintf(g_names.jump_file, sizeof g_names.jump_file,
+                   "falcon-esp-jump%s.efi",
+                   strcmp(arch, "x64") == 0 ? "" : "-aa64");
+    (void)snprintf(g_names.jump_rel, sizeof g_names.jump_rel, "%s/%s",
+                   STN_ESP_BOOT_DIR, g_names.jump);
+    (void)snprintf(g_names.jump_abs, sizeof g_names.jump_abs, "/%s/%s",
+                   STN_ESP_BOOT_DIR, g_names.jump);
+    (void)snprintf(g_names.shim_abs, sizeof g_names.shim_abs, "/%s/%s",
+                   STN_ESP_DIR, g_names.shim);
+    g_names_set = 1;
+    return 0;
+}
+
+const char *stn_arch_host(void)
+{
+    struct utsname u;
+
+    if (uname(&u) != 0)
+        return NULL;
+    if (strcmp(u.machine, "x86_64") == 0)
+        return "x64";
+    if (strcmp(u.machine, "aarch64") == 0 || strcmp(u.machine, "arm64") == 0)
+        return "aa64";
+    return NULL;
+}
+
+const stn_names *stn_n(void)
+{
+    if (!g_names_set) {
+        const char *host = stn_arch_host();
+
+        (void)stn_arch_set(host != NULL ? host : "x64");
+    }
+    return &g_names;
 }
 
 const char *stn_noshim_loader(int has_new, int has_old)

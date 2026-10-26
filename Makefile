@@ -111,6 +111,10 @@ EFI_STATION        := $(BIN)/falcon-boot-station.efi
 EFI_STATION_SIGNED := $(BIN)/falcon-boot-station-signed.efi
 EFI_ESP_JUMP       := $(BIN)/falcon-esp-jump.efi
 EFI_ESP_JUMP_SIGNED := $(BIN)/falcon-esp-jump-signed.efi
+EFI_AA64           := $(BIN)/falcon-boot-aa64.efi
+EFI_AA64_SIGNED    := $(BIN)/falcon-boot-aa64-signed.efi
+EFI_STATION_AA64   := $(BIN)/falcon-boot-station-aa64.efi
+EFI_ESP_JUMP_AA64  := $(BIN)/falcon-esp-jump-aa64.efi
 BIOS_STAGE3        := $(BIN)/falcon-bios-stage3.bin
 BIOS_STATION_STAGE3 := $(BIN)/falcon-bios-station-stage3.bin
 BIOS_STATION_LEGACY_STAGE3 := $(BIN)/falcon-bios-station-legacy-stage3.bin
@@ -171,6 +175,36 @@ $(EFI_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(EFI_CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
+# ---- the freestanding EFI flavour, AArch64 ----
+#
+# The same images for AArch64 UEFI, by llvm-mingw's clang: its driver takes
+# the mingw link line above unchanged. AArch64 has no red zone to switch
+# off, and clang spells the frame limit -Wframe-larger-than. Each app links
+# here as <image>-aa64.efi. A source that is x86 only keeps its x86 body
+# behind __x86_64__ and builds an equivalent, or a stub never reached,
+# under __aarch64__, so the apps' source lists serve both.
+CC_AA64 := aarch64-w64-mingw32-clang
+OBJDUMP_AA64 := aarch64-w64-mingw32-objdump
+
+EFI_AA64_CFLAGS := $(filter-out -mno-red-zone -Wstack-usage=%,$(EFI_CFLAGS)) \
+	-Wframe-larger-than=32768
+
+# lld names the subsystem where GNU ld takes its number.
+EFI_AA64_LDFLAGS := -nostdlib -shared -Wl,--subsystem,efi_application \
+	-e efi_main -Wl,--no-insert-timestamp -s
+
+EFI_AA64_OBJ := $(OBJ)/efi-aa64-$(VARIANT)
+
+# Sources with no AArch64 body at all, left out of every aa64 link: the
+# x86 SIMD block functions, whose callers reach them only behind an x86
+# guard (falcon-core/src/crypto/argon2.c, xts.c).
+EFI_X86_ONLY := $(addprefix falcon-core/src/crypto/,aesni.c argon2_sse2.c \
+	argon2_ssse3.c argon2_avx2.c)
+
+$(EFI_AA64_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
 # ---- the hosted Linux flavour ----
 #
 # Ordinary Linux userland C, built by the HOST compiler, and no part of the
@@ -197,6 +231,22 @@ HOST_OBJ := $(OBJ)/host
 $(HOST_OBJ)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC_HOST) $(HOST_CFLAGS) -MMD -MF $@.d -c -o $@ $<
+
+# ---- the hosted Linux flavour, AArch64 ----
+#
+# The same userland for an arm64 machine, linked static: the appliance's
+# PID 1 and sign tool in the AArch64 appliance, and the release's arm64
+# host tools. clang and ld.lld (llvm-mingw's in the harness) against
+# Debian's arm64 libc and libgcc, installed as a foreign architecture; the
+# cross gcc conflicts with gcc-multilib.
+CC_HOST_A64 ?= clang --target=aarch64-linux-gnu
+LD_HOST_A64 := $(CC_HOST_A64) -fuse-ld=lld
+HOST_A64_CFLAGS := $(HOST_CFLAGS)
+HOST_A64_OBJ := $(OBJ)/host-a64
+
+$(HOST_A64_OBJ)/%.o: %.c
+	@mkdir -p $(@D)
+	$(CC_HOST_A64) $(HOST_A64_CFLAGS) -MMD -MF $@.d -c -o $@ $<
 
 # AES-NI intrinsics, this object only, in both flavours: -maes lets gcc emit
 # those instructions anywhere in the TU, so nothing else may carry it. The
@@ -403,7 +453,7 @@ COV_FILTER := $(subst $(cov_space),|,$(patsubst %,%$$,$(subst .,\.,$(COV_UNITS))
 .PHONY: all test test-junit coverage test-fixtures check-tools analyze \
 	version-stamp clean
 
-all: $(EFI) cli winjump compile_commands.json
+all: $(EFI) aa64 cli winjump compile_commands.json
 
 # Runs every component's tests and reports all failures before failing.
 # Stale counters from an earlier run would inflate the coverage report, so
@@ -470,7 +520,7 @@ coverage: test
 # read these images SKIP when the images are absent, and a skipped cmocka
 # suite does not fail. Without this target, a clean checkout runs its tests,
 # reports green, and leaves the ext4 and LUKS readers at zero coverage.
-test-fixtures: test-image test-ext4 test-jbd2 test-fat test-luks test-isoview test-trust \
+test-fixtures: test-image test-ext4 test-jbd2 test-fat test-btrfs test-xfs test-luks test-isoview test-trust \
 	test-iso9660 test-udf test-wim test-uefiboot test-biosboot
 
 # One fixture at a time, under -j too. mk-test-jbd2.sh snapshots a mounted
@@ -499,7 +549,7 @@ check-deps:
 # generated blob sources (build/gen/*_blob.c). Without them it loads no
 # project, checks nothing and reports zero findings, which is how the gate
 # passed for a week without running cppcheck at all.
-analyze: all bios check-deps
+analyze: all bios check-deps $(COMPDB_AA64)
 	tools/analyze.sh
 
 # ---- compile_commands.json ----
@@ -607,6 +657,26 @@ compile_commands.json: Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
 	$(call cc_db_emit,$(CC_DB_HOOK),$(CC_HOST),$(HOOK_CFLAGS) -ffunction-sections -fdata-sections)
 	$(call cc_db_emit,$(CC_DB_VDISK),x86_64-w64-mingw32-gcc,$(VDISK_CFLAGS) $(VDISK_X64_INC))
 	$(call cc_db_emit,$(CC_DB_TEST),$(CC_HOST),$(TEST_CFLAGS),$(CC_DB_TEST_INC))
+	@sed -i '$$ s/,$$//' $@
+	@echo ']' >> $@
+
+# The AArch64 flavour's database, for the analyzer alone (tools/analyze.sh,
+# tidy): the loader sources with an architecture branch, built as the aa64
+# images build them, and the ARM64 winjump. The editor's database stays the
+# x86-64 one; a file has one entry there. The target is spelled out, as
+# llvm-mingw's wrapper adds it and clang-tidy runs no wrapper; it finds
+# llvm-mingw's headers through the -isystem, as WINJUMP_SYSINC does gcc's.
+COMPDB_AA64 := build/compdb-aa64/compile_commands.json
+CC_DB_AA64_SRCS = $(shell grep -lE '__aarch64__|__x86_64__|EFI_ARCH_' \
+	$(filter-out $(EFI_X86_ONLY),$(sort $(EFI_APP_SRCS))))
+LLVM_MINGW_A64_INC = $(shell d=$$(command -v $(CC_AA64)) && \
+	echo "-isystem $${d%/bin/*}/aarch64-w64-mingw32/include")
+
+$(COMPDB_AA64): Makefile $(wildcard falcon-*/build.mk apps/*/app.mk)
+	@mkdir -p $(@D)
+	@echo '[' > $@
+	$(call cc_db_emit,$(foreach s,$(CC_DB_AA64_SRCS),$(s):$(EFI_AA64_OBJ)/$(s:.c=.o)),$(CC_AA64),--target=aarch64-w64-mingw32 $(EFI_AA64_CFLAGS))
+	$(call cc_db_emit,$(foreach s,$(WINJUMP_SRCS),$(s):$(WINJUMP_A64_OBJ)/$(s:.c=.o)),$(CC_WINJUMP_A64),--target=aarch64-w64-mingw32 $(WINJUMP_A64_CFLAGS) $(LLVM_MINGW_A64_INC))
 	@sed -i '$$ s/,$$//' $@
 	@echo ']' >> $@
 

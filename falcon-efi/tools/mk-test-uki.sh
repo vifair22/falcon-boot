@@ -12,6 +12,11 @@
 #   build/test/fixture-uki.efi          unsigned
 #   build/test/fixture-uki-signed.efi   signed with the throwaway test MOK
 #
+# With UKI_ARCH=aa64, the same for AArch64, as fixture-uki-aa64.efi and
+# fixture-uki-aa64-signed.efi: Fedora's arm64 kernel
+# (tools/fetch-fedora-kernel.sh), the arm64 stub, the init built for arm64,
+# and the PL011 console, ttyAMA0.
+#
 # Ingredients:
 #   kernel   /arch/boot/x86_64/vmlinuz-linux out of an Arch ISO, read with
 #            bsdtar (ISO9660). The ISO is READ ONLY and never modified.
@@ -28,6 +33,7 @@
 # Env:   ARCH_ISO   source ISO (default: the one on this stick's p2;
 #                   tools/arch-iso.sh)
 #        UKI_KERNEL pre-extracted kernel, skips the ISO entirely
+#        UKI_ARCH   x64 (default) or aa64
 #
 # THIS IS RIG SCAFFOLDING. The product's UKI is built by the host tooling of
 # DESIGN Section 8 from the user's own kernel and initramfs, and signed with a
@@ -41,21 +47,40 @@ cd "$(dirname "$0")/../.."
 . tools/arch-iso.sh
 trap arch_iso_release EXIT
 ISO_KERNEL_PATH=arch/boot/x86_64/vmlinuz-linux
-STUB=/usr/lib/systemd/boot/efi/linuxx64.efi.stub
+UKI_ARCH="${UKI_ARCH:-x64}"
 
 OUT=build/test
 WORK="$OUT/uki-work"
-KERNEL="${UKI_KERNEL:-$OUT/fixture-vmlinuz}"
-INITRD="$OUT/fixture-initrd.cpio"
-UKI="$OUT/fixture-uki.efi"
-UKI_SIGNED="$OUT/fixture-uki-signed.efi"
+case "$UKI_ARCH" in
+x64)
+    STUB=/usr/lib/systemd/boot/efi/linuxx64.efi.stub
+    KERNEL="${UKI_KERNEL:-$OUT/fixture-vmlinuz}"
+    SUFFIX=
+    CONSOLE=ttyS0
+    CC_INIT=(gcc)
+    ;;
+aa64)
+    STUB=/usr/lib/systemd/boot/efi/linuxaa64.efi.stub
+    KERNEL="${UKI_KERNEL:-build/fedora-kernel/aarch64/vmlinuz}"
+    SUFFIX=-aa64
+    CONSOLE=ttyAMA0
+    CC_INIT=(clang --target=aarch64-linux-gnu -fuse-ld=lld)
+    ;;
+*)
+    echo "ERROR: UKI_ARCH is x64 or aa64" >&2
+    exit 2
+    ;;
+esac
+INITRD="$OUT/fixture-initrd$SUFFIX.cpio"
+UKI="$OUT/fixture-uki$SUFFIX.efi"
+UKI_SIGNED="$OUT/fixture-uki$SUFFIX-signed.efi"
 
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 
-CMDLINE="console=ttyS0,115200 console=tty0 panic=10 rd.systemd.unit=none"
+CMDLINE="console=$CONSOLE,115200 console=tty0 panic=10 rd.systemd.unit=none"
 
-for t in bsdtar cpio gcc ukify; do
+for t in bsdtar cpio "${CC_INIT[0]}" ukify; do
     command -v "$t" >/dev/null 2>&1 || {
         echo "ERROR: $t not found" >&2
         exit 1
@@ -75,6 +100,9 @@ mkdir -p "$WORK/root/dev"
 # bsdtar reads ISO9660 directly, so no loop mount and no sudo. Extracting to a
 # scratch directory keeps the one write anywhere near the ISO on our side of
 # the fence.
+if [[ ! -f "$KERNEL" && "$UKI_ARCH" == aa64 ]]; then
+    tools/fetch-fedora-kernel.sh aarch64
+fi
 if [[ ! -f "$KERNEL" ]]; then
     arch_iso_resolve
     [[ -f "$ARCH_ISO" ]] || {
@@ -92,7 +120,8 @@ echo "   kernel: $KERNEL ($(stat -c%s "$KERNEL") bytes)"
 # Static because it is PID 1 in an initramfs that contains exactly one file;
 # there is no dynamic loader in there to find a library with.
 echo "== building the fixture init"
-gcc -std=c11 -O2 -static -Wall -Wextra -o "$WORK/root/init" falcon-efi/tools/uki-init/init.c
+"${CC_INIT[@]}" -std=c11 -O2 -static -Wall -Wextra -o "$WORK/root/init" \
+    falcon-efi/tools/uki-init/init.c
 
 # Uncompressed newc. The kernel sniffs each initramfs segment for a compression
 # magic and takes it raw when there is none, and an extra megabyte costs

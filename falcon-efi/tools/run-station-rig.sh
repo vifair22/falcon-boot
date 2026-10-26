@@ -83,6 +83,13 @@ MKSTICK=build/bin/falcon-boot-mkstick
 STATION=build/test-station.img
 STANDIN=build/test/standin-signed.efi
 LOADER=build/bin/falcon-boot-station-signed.efi
+# x64, or aa64 for the aa64- cases: set_arch picks the disk, the images and
+# the firmware, and SCALE stretches every wait for an emulated machine.
+ARCH=x64
+SCALE=1
+NEXT_NAME=grubx64.efi
+MEMTEST_LABEL="Memory test (memtest86+)"
+STANDIN_PLAIN=build/test/standin.efi
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 TIMEOUT=240
 
@@ -127,9 +134,9 @@ win_part_size() {
 # and FalconNextBoot when NEXT is set.
 vars_json() {
     python3 - "$WIN_PART" "$(win_part_size)" "$BOOTMGFW" "${NO_WIN_ENTRY:-0}" \
-        "${NEXT:-}" "$FALCON_GUID" "$GLOBAL_GUID" <<'EOF'
+        "${NEXT:-}" "$FALCON_GUID" "$GLOBAL_GUID" "$ARCH" <<'EOF'
 import json, struct, sys, uuid
-part, size, path, no_entry, nxt, fguid, gguid = sys.argv[1:8]
+part, size, path, no_entry, nxt, fguid, gguid, arch = sys.argv[1:9]
 v = []
 if no_entry != "1":
     desc = "Windows Boot Manager\0".encode("utf-16-le")
@@ -143,8 +150,12 @@ if no_entry != "1":
     # this prefix. PciRoot(0)/Pci(0x1f,0x2)/Sata(1,0xFFFF,0), the second
     # AHCI port.
     pre = struct.pack("<BBHII", 2, 1, 12, 0x0A0341D0, 0)
-    pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
-    pre += struct.pack("<BBHHHH", 3, 0x12, 10, 1, 0xFFFF, 0)
+    if arch == "aa64":
+        # PciRoot(0)/Pci(6,0): the second disk's virtio-blk on virt.
+        pre += struct.pack("<BBHBB", 1, 1, 6, 0, 6)
+    else:
+        pre += struct.pack("<BBHBB", 1, 1, 6, 2, 0x1F)
+        pre += struct.pack("<BBHHHH", 3, 0x12, 10, 1, 0xFFFF, 0)
     dp = pre + hd + fp + end
     opt = struct.pack("<IH", 1, len(dp)) + desc + dp
     v.append({"name": "Boot0009", "guid": gguid, "attr": 7,
@@ -165,7 +176,7 @@ station_image() {  # station_image INI_TEXT
     # The loader as built now, so a disk made before the last change to it
     # still tests that change.
     for dir in falcon BOOT; do
-        mcopy -o -i "$R/station.img@@1M" "$LOADER" ::/EFI/$dir/grubx64.efi
+        mcopy -o -i "$R/station.img@@1M" "$LOADER" "::/EFI/$dir/$NEXT_NAME"
     done
     if [[ -n "$1" ]]; then
         printf '%s' "$1" > "$R/STATION.INI"
@@ -184,7 +195,7 @@ mon() { printf '%s\n' "$*" | socat - "UNIX-CONNECT:$R/mon.sock" >/dev/null 2>&1 
 
 wait_for() {    # wait_for PATTERN SECONDS
     local i
-    for (( i = 0; i < $2 * 10; i++ )); do
+    for (( i = 0; i < $2 * 10 * SCALE; i++ )); do
         log_text "$R/serial.log" | grep -aqF -- "$1" && return 0
         kill -0 "$QPID" 2>/dev/null || { log_text "$R/serial.log" |
             grep -aqF -- "$1"; return; }
@@ -199,7 +210,7 @@ has() { log_text "$R/serial.log" | grep -aqF -- "$1"; }
 # back instead.
 wait_exit() {   # wait_exit SECONDS
     local i
-    for (( i = 0; i < $1 * 10; i++ )); do
+    for (( i = 0; i < $1 * 10 * SCALE; i++ )); do
         kill -0 "$QPID" 2>/dev/null || return 0
         sleep 0.1
     done
@@ -212,7 +223,7 @@ count() { log_text "$R/serial.log" | grep -aoF -- "$1" | wc -l; }
 # 5.2 says nothing of the wait), so progress is counted, not matched.
 wait_count() {
     local i
-    for (( i = 0; i < $3 * 10; i++ )); do
+    for (( i = 0; i < $3 * 10 * SCALE; i++ )); do
         [[ $(log_text "$R/serial.log" | grep -aoF -- "$1" | wc -l) -ge $2 ]] && return 0
         kill -0 "$QPID" 2>/dev/null || return 1
         sleep 0.1
@@ -251,7 +262,15 @@ boot() {
 
 boot_once() {
     local fw=$1 code vars
-    if [[ $fw == uefi ]]; then
+    if [[ $ARCH == aa64 ]]; then
+        if [[ $fw == uefi ]]; then
+            code=$(aavmf_find CODE plain)
+            vars=$(aavmf_find VARS plain)
+        else
+            code=$(aavmf_find CODE secboot)
+            vars=build/mok-test/AAVMF_VARS.secboot.mok.fd
+        fi
+    elif [[ $fw == uefi ]]; then
         code=$(ovmf_find CODE plain)
         vars=$(ovmf_find VARS plain)
     else
@@ -269,6 +288,23 @@ boot_once() {
             >/dev/null 2>&1
     fi
     rm -f "$R/serial.log" "$R/mon.sock"
+    if [[ $ARCH == aa64 ]]; then
+        # virt under AAVMF: virtio disks, an xhci keyboard for sendkey,
+        # ramfb; TCG on an x86-64 host.
+        timeout "$(( TIMEOUT * SCALE ))" qemu-system-aarch64 -machine virt \
+            -m 1024 -cpu max -display none -net none \
+            -drive "if=pflash,format=$(fw_format "$code"),readonly=on,file=$code" \
+            -drive "if=pflash,format=$(fw_format "$vars"),file=$R/vars.fd" \
+            -device qemu-xhci -device usb-kbd -device ramfb \
+            -drive "if=none,id=d0,format=raw,file=$R/station.img" \
+            -device virtio-blk-pci,drive=d0,addr=5,bootindex=0 \
+            -drive "if=none,id=d1,format=raw,file=$R/win.img" \
+            -device virtio-blk-pci,drive=d1,addr=6,bootindex=1 \
+            -serial "file:$R/serial.log" \
+            -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
+        QPID=$!
+        return
+    fi
     timeout "$TIMEOUT" qemu-system-x86_64 -machine q35 -m 1024 \
         -enable-kvm -cpu host -display none -net none \
         -drive "if=pflash,format=raw,readonly=on,file=$code" \
@@ -312,7 +348,7 @@ case_menu() {
     sleep 1
     [[ -z "$why" ]] && { has "Personal OS (encrypted)" || why="no Personal OS row"; }
     [[ -z "$why" ]] && { has "Windows Boot Manager" || why="no firmware entry row"; }
-    [[ -z "$why" ]] && { has "Memory test (memtest86+)" || why="no memtest row"; }
+    [[ -z "$why" ]] && { has "$MEMTEST_LABEL" || why="no memtest row"; }
     [[ -z "$why" ]] && has "(disk $WIN_SHORT" && why="an ESP row for a Windows its entry names"
     [[ -z "$why" ]] && has "Booting in" && why="a countdown with no STATION.INI"
     if [[ -z "$why" ]]; then
@@ -341,7 +377,7 @@ case_countdown() {
     [[ -z "$why" ]] && { wait_for "FALCON-STANDIN \\EFI\\falcon\\memtest.efi" 30 ||
         why="memtest did not start"; }
     [[ -z "$why" ]] && { has "Booting in 1 s" || why="the count did not reach 1"; }
-    [[ -z "$why" ]] && { has "booting: Memory test (memtest86+)" || why="no route page"; }
+    [[ -z "$why" ]] && { has "booting: $MEMTEST_LABEL" || why="no route page"; }
     [[ -z "$why" ]] && { wait_for "the image exited, status 0x0" 15 || why="no exit page"; }
     halt
     result "$c" "$why" "counted 3 to 1, then memtest's stand-in ran"
@@ -483,10 +519,10 @@ case_no_default() {
 case_unsigned() {
     local c=$1 fw=$2 why=
     station_image $'[general]\ndefault = memtest\ntimeout = 1\n'
-    mcopy -o -i "$R/station.img@@1M" build/test/standin.efi \
+    mcopy -o -i "$R/station.img@@1M" "$STANDIN_PLAIN" \
         ::/EFI/falcon/memtest.efi
     NEXT= NO_WIN_ENTRY=0 boot "$fw"
-    wait_for "booting: Memory test (memtest86+)" 90 || why="memtest was not chosen"
+    wait_for "booting: $MEMTEST_LABEL" 90 || why="memtest was not chosen"
     if [[ -z "$why" && $fw == uefi ]]; then
         wait_for "FALCON-STANDIN \\EFI\\falcon\\memtest.efi" 30 ||
             why="the unsigned image did not start with Secure Boot off"
@@ -632,6 +668,13 @@ case_timing() {
 
 make --no-print-directory station cli "$STANDIN" "$LOADER" \
     build/test/standin.efi >/dev/null
+# The AArch64 cases' images, when any is asked for.
+if [[ " $* " == *" aa64-"* ]]; then
+    make --no-print-directory build/test/standin-aa64-signed.efi \
+        build/bin/falcon-boot-station-aa64-signed.efi >/dev/null
+    [[ -f build/test-station-aa64.img ]] ||
+        { echo "ERROR: build/test-station-aa64.img missing (make test-station-aa64)" >&2; exit 1; }
+fi
 [[ -f "$STATION" ]] || { echo "ERROR: $STATION missing (make test-station)" >&2; exit 1; }
 build_win_disk
 
@@ -644,10 +687,40 @@ if [[ ${#CASES[@]} -eq 0 ]]; then
     for c in "${ALL[@]}"; do CASES+=("uefi-sb-$c"); done
 fi
 
+# The AArch64 station: its own disk (mk-test-station.sh, STATION_ARCH=aa64),
+# its images, and the Windows disk rebuilt with the arm64 stand-in.
+set_arch() {    # set_arch x64|aa64
+    [[ $1 == "$ARCH" ]] && return
+    ARCH=$1
+    if [[ $ARCH == aa64 ]]; then
+        STATION=build/test-station-aa64.img
+        STANDIN=build/test/standin-aa64-signed.efi
+        LOADER=build/bin/falcon-boot-station-aa64-signed.efi
+        NEXT_NAME=grubaa64.efi
+        SCALE=${AA64_SCALE:-6}
+        MEMTEST_LABEL="Memory test (MemTest86)"
+        STANDIN_PLAIN=build/test/standin-aa64.efi
+    else
+        STATION=build/test-station.img
+        STANDIN=build/test/standin-signed.efi
+        LOADER=build/bin/falcon-boot-station-signed.efi
+        NEXT_NAME=grubx64.efi
+        SCALE=1
+        MEMTEST_LABEL="Memory test (memtest86+)"
+        STANDIN_PLAIN=build/test/standin.efi
+    fi
+    rm -f "$R/win.img"
+    build_win_disk
+}
+
 for c in "${CASES[@]}"; do
     case $c in
-    uefi-sb-*) fw=uefi-sb; name=${c#uefi-sb-} ;;
-    uefi-*)    fw=uefi;    name=${c#uefi-} ;;
+    aa64-*) set_arch aa64; c2=${c#aa64-} ;;
+    *)      set_arch x64;  c2=$c ;;
+    esac
+    case $c2 in
+    uefi-sb-*) fw=uefi-sb; name=${c2#uefi-sb-} ;;
+    uefi-*)    fw=uefi;    name=${c2#uefi-} ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
     case $name in

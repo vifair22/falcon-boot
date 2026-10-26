@@ -17,6 +17,23 @@ this file cites it by section and does not repeat it.
 11. Signing, and what lives where
 12. Troubleshooting by failure page
 13. Building and testing
+14. Releases
+
+## Start here
+
+To make a bootable stick and nothing more:
+
+1. Install `falcon-boot-bin` on Arch, or unpack the release tarball under `/`
+   (Section 14).
+2. `sudo falcon-boot-mkstick create /dev/disk/by-id/usb-<your stick> --force`
+   (Section 10), then `falcon-boot-mkstick bios <device>` if you want the BIOS
+   loader too.
+3. Copy `.iso` files onto the partition labelled `FALCON-ISO`. They appear in
+   the menu and boot.
+
+With Secure Boot on, the first boot enrolls the MOK in MokManager (Section
+3.1). Everything past Section 1 is the operator's reference: come back for the
+station, blessing, the personal OS, falcon jump, or a failure page.
 
 ## 1. The menu
 
@@ -66,7 +83,7 @@ A firmware that refuses says so, and the menu comes back:
 
 A menu with no rows at all says, in the panel:
 
-    (no ISOs found on the exFAT partition)
+    (no ISOs found in the ISO library)
 
 A list longer than the panel scrolls. The panel's right border is then a
 scroll bar: a block for where the window is in the list, and an arrow at
@@ -105,8 +122,8 @@ were unblessed. `b` and `a` open a confirmation before anything runs; the
 pages are in Section 4.
 
 Which route each key takes is in Section 2. A row tagged `{BIOS ONLY}`,
-`{EFI ONLY}` or `{64-BIT ONLY}` shows a page instead, on every key
-(Section 1.4).
+`{X64 ONLY}`, `{ARM64 ONLY}`, `{EFI ONLY}` or `{64-BIT ONLY}` shows a page
+instead, on every key (Section 1.4).
 
 ### 1.3 The title bar
 
@@ -173,17 +190,34 @@ with one is drawn yellow.
 | `{REVOKED}` | UEFI | Secure Boot on; dbx, MokListX or the SBAT level revokes it |
 | `{VALIDATION OFF}` | UEFI | shim validation disabled; on the personal OS row, a blessed Linux row, a `.efi` that is a UKI, and the station's UKI rows |
 | `{BIOS ONLY}` | UEFI | every state; the medium has no UEFI boot loader and no kernel UEFI can start |
-| `{EFI ONLY}` | BIOS | the medium has no BIOS boot image and no kernel falcon-bios can start |
+| `{ARM64 ONLY}` | UEFI on x86-64 | every state; the medium's only UEFI loader, or its kernel, is ARM64's |
+| `{X64 ONLY}` | UEFI on AArch64 | every state; the medium's only UEFI loader, or its kernel, is x86-64's |
+| `{EFI ONLY}` | BIOS | the medium has no BIOS boot image and no kernel falcon-bios can start, and an x86-64 machine's UEFI can start it |
+| `{ARM64 ONLY}` | BIOS | the same, but its only UEFI loader is ARM64's, so this PC's UEFI could not start it either |
 | `{64-BIT ONLY}` | BIOS | the medium needs long mode, and this processor has none |
 
-The last three are not predictions. Any key on such a row opens a box,
-titled `BIOS only`, `EFI only` or `64-bit only`, and starts nothing:
+One stick serves every machine: p1 carries the x86-64 and the AArch64
+UEFI loaders and the BIOS stages, the library holds media for any of them,
+and each machine tags what only another can boot. The shelf may hold UKIs
+for both architectures; each loader lists its own machine's alone.
+
+The last six are not predictions. Any key on such a row opens a box,
+titled `BIOS only`, `ARM64 only`, `X64 only`, `EFI only` or `64-bit only`,
+and starts nothing:
 
     this image boots only on a BIOS machine: it has no UEFI boot loader,
     and no kernel UEFI can start.
 
     Start the machine from this stick in BIOS mode (legacy or CSM) instead.
     The stick needs its BIOS loader for that (mkstick bios).
+
+    press any key to return to the menu.
+
+    this image boots only on an ARM64 (AArch64) machine: its UEFI boot
+    loader and its kernel are built for that processor.
+
+    Start that machine from this stick instead: the stick carries a loader
+    for both.
 
     press any key to return to the menu.
 
@@ -821,7 +855,7 @@ The errors before the survey:
 |---|---|
 | `ERROR: the loader passed no install ID (falcon.ident.cred).` | started some other way than from the loader |
 | `ERROR: no ISO library and LUKS shelf carry this stick's install ID.` | followed by `disks seen:` and the kernel's disks |
-| `ERROR: mounting p2: <reason>` | p2 is not readable exFAT |
+| `ERROR: mounting p2: <reason>` | p2 is neither exFAT nor FAT the kernel reads |
 | `ERROR: p3 (<dev>) is not a LUKS2 volume this appliance can open;` | p3 is plaintext or damaged |
 
 Each waits for Enter.
@@ -830,16 +864,19 @@ Each waits for Enter.
 
     make appliance
 
-builds `build/appliance/appliance-uki.efi`, unsigned. It needs passwordless
-sudo, `bsdtar`, and sd-stub at
-`/usr/lib/systemd/boot/efi/linuxx64.efi.stub`. Its kernel and modules come
-from an Arch ISO: `ARCH_ISO=<path>`, or by default
-`Linux/archlinux-2026.01.01-x86_64.iso` on the one attached `FALCON-ISO`
-partition, mounted read-only for the run. `APPLIANCE_KERNEL=<file>` names
-the kernel instead, and `APPLIANCE_CMDLINE` replaces its cmdline (default
-`console=ttyS1,115200 console=tty0 quiet loglevel=3 panic=15`). When the
-rig's test MOK exists it also writes `appliance-uki-signed.efi`, signed with
-that key, for the rig.
+builds `build/appliance/appliance-uki.efi`, unsigned, and
+
+    make appliance-aa64
+
+the same image for an AArch64 machine, `appliance-uki-aa64.efi`. Both build
+in the harness (`make` runs there), which carries both sd-stubs and the
+arm64 `sbsign`. Their kernel and modules are Fedora's, at the build
+`tools/fetch-fedora-kernel.sh` pins; the first build downloads it into
+`build/fedora-kernel/`. `APPLIANCE_KERNEL=<file>` names the kernel instead,
+and `APPLIANCE_CMDLINE` replaces its cmdline (default
+`console=ttyS1,115200 console=tty0 quiet loglevel=3 panic=15`, `ttyAMA0` on
+AArch64). When the rig's test MOK exists each also writes a `-signed.efi`
+copy, signed with that key, for the rig.
 
 On a new stick, `create` signs and stages it:
 
@@ -878,8 +915,9 @@ usage and the known families with the cmdline template of each, or
 | `--verbose`, `--quiet` | more or less diagnostic output |
 
 A `.efi` or `.img` takes only `--key`, `--cert` and `--dry-run`, and is
-signed in place. A `.img` is loop-mounted to reach its payload, which needs
-root. One already signed with this key is left as it is:
+signed in place. A `.img` is loop-mounted to reach its payloads, which
+needs root; `\EFI\BOOT\BOOTX64.EFI` and `BOOTAA64.EFI` are signed on each
+of its filesystems that has them. One already signed with this key is left as it is:
 
     already signed with this key, left alone: <path>
 
@@ -1003,8 +1041,8 @@ The other failures while unlocking:
 | `the passphrase did not open any keyslot.` | |
 | `the partition could not be read.` | a read error |
 | `the volume is outside what this loader supports.` | a LUKS2 header or cipher the loader does not take |
-| `the decrypted volume is not a filesystem this loader can read.` | not ext4 inside |
-| `no *.efi image was found in /uki or /EFI/Linux.` | |
+| `the decrypted volume is not a filesystem this loader can read.` | not ext4, FAT32, btrfs or xfs inside, or one outside its driver's set (a btrfs of more than one device or a checksum other than crc32c; an xfs v4, with an external log or a realtime device) |
+| `no *.efi image for this machine was found in /uki or /EFI/Linux.` | none, or only images for the other architecture: the chooser lists a machine's own (x86-64 or ARM64) UKIs alone |
 
 ### 5.3 The passphrase handoff
 
@@ -1050,24 +1088,24 @@ and in `/etc/crypttab` and `/etc/fstab`:
     <name>  UUID=<shelf-luks-uuid>  /etc/cryptsetup-keys.d/<name>.key  luks,discard,nofail
     /dev/mapper/<name>  /efi  ext4  defaults,noatime,nofail  0 2
 
+A FAT32 shelf keeps no file modes, so its line carries them, or the MOK
+key is readable by every user:
+
+    /dev/mapper/<name>  /efi  vfat  umask=0077,noatime,nofail  0 2
+
 `cryptsetup luksUUID <shelf-partition>` gives the UUID. The passphrase
 keeps keyslot 0 at its own cost. The keyfile's slot is pbkdf2 at 1000
 iterations because the loader tries every keyslot after a mistyped
 passphrase: an argon2id slot there would cost a second full derivation, and
 the keyfile's 512 random bits need no stretching. `nofail` keeps a shelf
-that will not open from stopping the boot. The thinkpad-t430 repository's
-`docs/gentoo-install.md` ("Boot chain", "Shelf keyfile") walks through it,
-and its `gentoo/etc/crypttab` is this in use.
+that will not open from stopping the boot.
 
 The initramfs drop-in goes in through the initramfs builder, so a rebuild
-keeps it. archusb (https://git.airies.net/vifair22/archusb) ships it as the
-`falcon-credential` mkinitcpio install hook.
+keeps it. On Arch it is a `falcon-credential` mkinitcpio install hook; see
+`docs/personal-os.md` for that recipe.
 
-For dracut, a module puts it in. This one is the thinkpad-t430 repository's
-(https://git.airies.net/vifair22/thinkpad-t430,
-`gentoo/usr/lib/dracut/modules.d/99falcon-credential/module-setup.sh`), in
-use on Gentoo with systemd since 2026-09-29, with the initramfs drop-in kept
-at `/etc/falcon/initrd-cryptsetup.conf`:
+For dracut, a module puts it in, with the initramfs drop-in kept at
+`/etc/falcon/initrd-cryptsetup.conf`:
 
     #!/bin/bash
     check() {
@@ -1091,11 +1129,9 @@ and a `dracut.conf.d` file enables it beside the systemd initramfs:
     add_dracutmodules+=" systemd crypt falcon-credential "
 
 `lsinitrd <uki> | grep falcon-credential` shows the drop-in in a built
-image. The same repository's `kernel-install` plugin
-(`gentoo/etc/kernel/install.d/95-falcon-shelf.install`) is an example of
-putting each signed UKI on the shelf as `<name>-<kver>.efi` and keeping
-`<name>.efi` as a copy of the newest, so a STATION.INI default naming
-`<name>.efi` survives kernel updates.
+image. A `kernel-install` plugin can automate the shelf side: put each signed
+UKI on the shelf as `<name>-<kver>.efi` and keep `<name>.efi` as a copy of the
+newest, so a STATION.INI default naming `<name>.efi` survives kernel updates.
 
 When the handoff cannot be made the boot goes on, and the OS asks for the
 passphrase again:
@@ -1149,6 +1185,7 @@ A shelf that does not mount fails at `mounting the filesystem inside it`
 | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | as it says; `noresume` keeps a hibernated OS from resuming over the repaired shelf |
 | `reading the shelf's journal needs N MiB of memory; this machine has M MiB free.` | boot it on a machine with more memory |
 | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | as it says |
+| `the filesystem's log needs Linux to finish it; mount it once from Linux.` | an xfs log with a file mapping change still to finish (DESIGN 5.4): mount it, unmount it, boot again |
 
 Setting `/sys/power/freeze_filesystems` to 1 in the OS leaves the shelf
 clean when it hibernates (`docs/DESIGN.md` Section 5.4).
@@ -1342,6 +1379,11 @@ It ends:
 
     /dev/X boots the station (install ID <32 hex digits>).
     `falcon-boot-mkstick station remove --backup station.bak` undoes it.
+
+An AArch64 machine's station is the same with its own names
+(`BOOTAA64.EFI`, `falconaa64.efi`, `shimaa64.efi`), UEFI only;
+`--arch aa64` installs one from another machine, onto an image or a disk
+that machine will boot.
 
 A station has no shim by default: the firmware entry names
 the jumper, `\EFI\BOOT\BOOTX64.EFI`, which starts `\EFI\falcon\falconx64.efi`;
@@ -2087,7 +2129,8 @@ passphrase is read from `/dev/tty` with echo off.
     falcon-boot-mkstick create <target> [--force] [--size <size>]
         [--p1-size <size>] [--iso-size <size|rest>] [--p3-size <size>]
         [--p4-size <size|rest>] [--passphrase-file <file>]
-        [--shim <dir>] [--loader <file>] [--uki <file>]... [--cn <name>]
+        [--shim <dir>] [--loader <file>] [--loader-aa64 <file>]
+        [--uki <file>]... [--cn <name>]
         [--key <file> --cert <file>] [--cert-out <file>] [--key-out <dir>] [--p3-plain]
         [--p2-fs <fs>] [--p3-fs <fs>] [--stage3 <file>]
 
@@ -2102,20 +2145,21 @@ exist, and that every `--uki` exists.
 | `--force` | off | required for a block device; also overwrites a target that already carries a partition table |
 | `--size` | none | creates the image file at this size when `<target>` does not exist; ignored, with a warning, when it does |
 | `--p1-size` | `64M` | p1, the ESP |
-| `--iso-size` | half of what is left | p2, the exFAT ISO library; `rest` takes everything p4 does not |
+| `--iso-size` | half of what is left | p2, the ISO library; `rest` takes everything p4 does not |
 | `--p3-size` | `1G` | p3, the UKI shelf |
 | `--p4-size` | the rest | p4, LUKS2 root and home; `rest` takes everything p2 does not |
 | `--passphrase-file` | prompt | the p3 and p4 passphrase; the prompt is `passphrase for p3 and p4: ` then `repeat: ` |
 | `--shim` | `build/shim/bins` | the directory holding shim and MokManager (Section 13.6) |
 | `--loader` | `build/bin/falcon-boot.efi` | the loader to sign and install |
+| `--loader-aa64` | `build/bin/falcon-boot-aa64.efi` | the AArch64 loader, staged beside the x64 one with shimaa64 from `--shim`. Without this option, a missing loader or shim leaves the stick x86-64 only, with a warning; given, it is required |
 | `--uki` | none | a UKI to sign with the MOK and put in p3's `/uki`; repeatable; two with the same basename are refused |
 | `--cn` | `falcon-boot MOK` | the new MOK certificate's subject CN; refused with `--key` |
 | `--key`, `--cert` | a new MOK | an existing MOK private key and its certificate, both PEM, instead of a new pair: a replacement stick keeps the MOK the machines already enrolled. The key must be the certificate's, checked before anything is written. The first boot needs no enrollment where that certificate is enrolled |
 | `--cert-out` | none | also writes the public certificate here, PEM |
 | `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |
-| `--p2-fs` | `exfat` | p2's filesystem; `exfat` is the only one accepted |
-| `--p3-fs` | `ext4` | p3's filesystem; `ext4` is the only one accepted |
+| `--p2-fs` | `exfat` | p2's filesystem: `exfat` or `fat32`. FAT32 holds no file of 4 GiB or more, which rules out most Windows ISOs; create says so before it writes anything |
+| `--p3-fs` | `ext4` | p3's filesystem: `ext4`, `fat32`, `btrfs` or `xfs` (DESIGN Section 3); `btrfs` needs `mkfs.btrfs`, `xfs` needs `mkfs.xfs` and a `--p3-size` of `320M` or more. A FAT32 shelf is mounted `umask=0077` while the key is written |
 | `--stage3` | `build/bin/falcon-bios-stage3.bin` | the BIOS stage 3 p1's reserved sectors are sized for |
 
 With neither `--iso-size` nor `--p4-size`, what is left after p1 and p3 is
@@ -2127,14 +2171,14 @@ What it makes:
 
 | partition | type, label | contents |
 |---|---|---|
-| p1 | ESP, `FALCON-ESP`, FAT32 | `/EFI/BOOT/BOOTX64.EFI` (shim), MokManager under the name shim launches it by, the loader under shim's next-stage name, `/falcon-boot.cer` |
-| p2 | Microsoft basic data, `FALCON-ISO`, exFAT | `/falcon/blessed/`, `/.falcon` |
-| p3 | falcon shelf, `FALCON-UKI`, LUKS2 and ext4 | `/uki/` with each `--uki`, `/falcon-mok.key` (0600), `/falcon-mok.crt` |
+| p1 | ESP, `FALCON-ESP`, FAT32 | `/EFI/BOOT/BOOTX64.EFI` (shim), MokManager under the name shim launches it by, the loader under shim's next-stage name; the same for AArch64 (`BOOTAA64.EFI`, `mmaa64.efi`, `grubaa64.efi`); `/falcon-boot.cer` |
+| p2 | Microsoft basic data, `FALCON-ISO`, exFAT (or FAT32) | `/falcon/blessed/`, `/.falcon` |
+| p3 | falcon shelf, `FALCON-UKI`, LUKS2 and the `--p3-fs` filesystem | `/uki/` with each `--uki`, `/falcon-mok.key` (0600), `/falcon-mok.crt` |
 | p4 | Linux LUKS, `FALCON-ROOT`, LUKS2 and ext4 | empty |
 
 p3's keyslot is argon2id at 32768 KiB, time 4, 4 lanes, `aes-xts-plain64`
 with a 512-bit key. p4 takes cryptsetup's own argon2id cost. Both share the
-one passphrase. With `--p3-plain`, p3 is ext4 alone and holds `/uki/`,
+one passphrase. With `--p3-plain`, p3 is its filesystem alone and holds `/uki/`,
 `/falcon-mok.crt` and `/.falcon`, with no private key; the loader asks for
 no passphrase and the initramfs prompts for p4 itself.
 
@@ -2156,9 +2200,14 @@ never less than 1 MiB. The stick's stage 3 is about 200 KB, so the room is
 installs without reformatting p1. With no stage 3 built, the 1 MiB floor is
 used. `create` does not install the BIOS stages; `bios` (10.2) does.
 
-The MOK pair is generated by `openssl`: RSA 4096, valid 3650 days. The
-loader and each `--uki` are signed with it by `sbsign`; shim and MokManager
-are copied as they are (Section 11.1).
+The MOK pair is generated by `openssl`: RSA 4096, valid 3650 days. Each
+architecture's loader and each `--uki` are signed with it by `sbsign`; shim
+and MokManager are copied as they are (Section 11.1). The shim for each
+architecture is `shim<arch>.efi` or `fedora-16.1-shim<arch>.efi` in
+`--shim`, and is refused when its PE machine is another's. Fedora's
+shimaa64 is signed by the Microsoft UEFI CA 2023 alone: a machine whose db
+holds only the 2011 CA refuses it, and needs the 2023 CA enrolled, or
+Secure Boot off.
 
 A target that already carries an MBR or a GPT partition table, or a table
 that does not read cleanly, is refused without `--force`. A block device is
@@ -2385,15 +2434,16 @@ prompt; Escape there goes to the menu.
 ### 10.6 station
 
     falcon-boot-mkstick station install <disk> [--bios] [--uefi]
-        [--size <MiB>] [--shelf <n|disk:n|partition>] [--esp <n>]
+        [--arch x64|aa64] [--size <MiB>] [--shelf <n|disk:n|partition>] [--esp <n>]
         [--memtest <file>] [--memtest-efi <file>] [--key <file> --cert <file>]
         [--passphrase-file <file>] [--legacy [--uki <file>]... [--mods <dir>]]
         [--also <disk>]... [--no-scan] [--backup <file>] [--force] [--dry-run]
         [--shim <dir>]
         [--stage1 <file>] [--stage2 <file>] [--stage3 <file>] [--loader <file>]
     falcon-boot-mkstick station remove [<disk>] --backup <file> [--full]
-        [--force] [--dry-run]
+        [--arch x64|aa64] [--force] [--dry-run]
     falcon-boot-mkstick station status <disk> [--also <disk>]... [--no-scan]
+        [--arch x64|aa64]
     falcon-boot-mkstick station totp enroll|reseal|remove|check <disk> ...
 
 Section 2 gives the install procedure; this is the reference.
@@ -2408,6 +2458,7 @@ ESP's and the shelf's.
 | option | default | what it does |
 |---|---|---|
 | `--bios`, `--uefi` | both, where the disk allows | which station to install |
+| `--arch` | this machine's | the machine the station boots: `x64`, or `aa64`, whose station is UEFI only and whose names are `falconaa64.efi`, `BOOTAA64.EFI` and `shimaa64.efi`; `--bios` and `--legacy` are refused with it |
 | `--size` | 64 (288 on a 4Kn disk) | the station partition's size in MiB, at least 40 (272 on a 4Kn disk), at most 4096 |
 | `--shelf` | none: the station offers no Linux | the shelf: `n` is partition n of `<disk>`, `disk:n` partition n of another disk, anything else a partition node; it is stamped with the install ID |
 | `--esp` | the disk's ESP | the ESP's partition number |
@@ -2588,6 +2639,7 @@ The test rig's options for these (`--tpm-socket`, `--event-log`,
 
 | option | default | what it does |
 |---|---|---|
+| `--arch` | this machine's | the machine the station boots, `x64` or `aa64` (10.6); every totp command takes it |
 | `--pcrs` | `0,2,4,7` | the PCRs to seal to, 0 to 15 |
 | `--owner-auth-file` | none on a TPM 2.0, the well-known secret on 1.2 | the TPM owner's authorisation: the file's bytes, a trailing newline dropped; on 1.2 exactly 20 bytes is the secret itself, anything else a passphrase whose SHA-1 it is |
 | `--label` | this host's name | the authenticator's account name |
@@ -2664,7 +2716,9 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 
 | option | default | what it does |
 |---|---|---|
-| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages, and `mod/` |
+| `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-aa64.efi`, `falcon-boot-station.efi`, `falcon-esp-jump.efi` (with `-aa64` for an AArch64 station), the BIOS stages, and `mod/` |
+| `--shim` | `build/shim/bins` | shimaa64 and its MokManager, for a stick that has no AArch64 chain yet |
+| `--arch` | this machine's | the station's architecture, `x64` or `aa64` (10.6) |
 | `--backup-dir` | `.` | where what is replaced is saved |
 | `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
 | `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it; given together |
@@ -2676,7 +2730,7 @@ What the disk is comes from its records:
 
 | disk | found by | written |
 |---|---|---|
-| stick | a boot record, with a library and a shelf of its install ID | the loader on p1; stages 1-3 when LBA 0 holds stage 1 |
+| stick | a boot record, with a library and a shelf of its install ID | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1 |
 | BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
 | UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |
@@ -3033,7 +3087,7 @@ below.
 | `opening the ISO`, `reading the ISO's filesystem` | - | Copy the ISO again. |
 | `locating the ISO's loader.conf` | - | Press `c`. |
 | `placing the memory-disk record` | `this ISO has no free bytes in its root or /boot directory for the record this route adds.` | Press `c`. |
-| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` | As it says. |
+| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` (on AArch64: `too little free memory in one run`) | As it says. |
 | `writing the loader settings` | `this ISO's loader.conf has no comment block long enough to hold the memory-disk settings.` | Press `c`. |
 
 The medium is then served as the CHN route serves it, and its later stages
@@ -3061,11 +3115,12 @@ refusal sentence of 12.3.
 | `unlocking the encrypted partition` | `this keyslot needs <n> MiB of memory; this machine has <m> MiB free.` | Boot on a machine with more memory, or add a keyslot with less Argon2id memory from Linux. |
 | `unlocking the encrypted partition` | `the volume is outside what this loader supports.` | Check the LUKS2 header with `cryptsetup luksDump`. |
 | `opening the decrypted volume` | - | Report it. |
-| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4. |
+| `mounting the filesystem inside it`, `mounting the plaintext UKI shelf` | `the decrypted volume is not a filesystem this loader can read.` / `the shelf is not a filesystem this loader can read.` | The shelf is not ext4, FAT32, btrfs or xfs. |
 | (same) | `the shelf's journal is damaged; run fsck on it from another system, then boot its OS once with noresume.` | As it says. |
 | (same) | `reading the shelf's journal needs <n> MiB of memory; this machine has <m> MiB free.` | Run `fsck` on the shelf from another system. |
 | (same) | `the filesystem was not cleanly unmounted; run fsck on it from Linux.` | As it says. |
-| `looking for a UKI` | `no *.efi image was found in /uki or /EFI/Linux.` | Put a signed UKI in `/uki` (11.1). |
+| (same) | `the filesystem's log needs Linux to finish it; mount it once from Linux.` | As it says. |
+| `looking for a UKI` | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | Put a signed UKI for this machine's architecture in `/uki` (11.1). |
 | `looking for the UKI` | `that UKI is not on the shelf.` | The marker or STATION.INI names a file that is gone. |
 | `looking for the signing appliance` | `no signing-appliance image is on this stick's shelf. Bless the ISO on a Linux host with falcon-boot-sign instead.` | As it says, or stage the appliance UKI on p3. |
 | `reading the UKI` | - | p3 failed a read. |
@@ -3189,7 +3244,7 @@ The kernel lines, shared by DIR, POS and MEM, each ending in `.`:
 | `unlocking the encrypted partition` | `the passphrase did not open any keyslot.`, `the partition could not be read.`, `this keyslot needs <n> MiB of memory; this machine has <m> MiB free.`, `the volume is outside what this loader supports.` | As on UEFI, above. |
 | `opening the decrypted volume` | - | Report it. |
 | `mounting the filesystem inside it` | `the decrypted volume is not a filesystem this loader can read.`, or one of the three journal lines given for UEFI | As on UEFI. |
-| `looking for a UKI` | `no *.efi image was found in /uki or /EFI/Linux.` | Put a UKI in `/uki`. |
+| `looking for a UKI` | `no *.efi image for this machine was found in /uki or /EFI/Linux.` | Put a UKI in `/uki`. |
 | `looking for a UKI` | `the image this entry names is not on the shelf.` | Fix the marker or STATION.INI's `uki`. |
 | `reading the UKI` | `the image is not a PE file, so it is not a UKI.` / `the image has no .linux section, so it is not a UKI.` | Replace the file. |
 | `starting the kernel` | one of the kernel lines (BIOS: DIR) | See there. |
@@ -3285,7 +3340,10 @@ no route code:
 | loader | tag | text |
 |---|---|---|
 | UEFI | `{BIOS ONLY}` | `this image boots only on a BIOS machine: it has no UEFI boot loader, and no kernel UEFI can start.` then `Start the machine from this stick in BIOS mode (legacy or CSM) instead. The stick needs its BIOS loader for that (mkstick bios).` |
+| UEFI on x86-64 | `{ARM64 ONLY}` | `this image boots only on an ARM64 (AArch64) machine: its UEFI boot loader and its kernel are built for that processor.` then `Start that machine from this stick instead: the stick carries a loader for both.` |
+| UEFI on AArch64 | `{X64 ONLY}` | `this image boots only on an x86-64 machine: its UEFI boot loader and its kernel are built for that processor.` then `Start that machine from this stick instead: the stick carries a loader for both.` |
 | BIOS | `{EFI ONLY}` | `this image boots only on a UEFI machine: it has no BIOS boot image, and no kernel falcon-bios can start.` then `Start the machine from this stick in UEFI mode instead.` |
+| BIOS | `{ARM64 ONLY}` | `this image boots only on an ARM64 (AArch64) machine: its UEFI boot loader and its kernel are built for that processor.` then `Start that machine from this stick instead: the stick carries a loader for it.` |
 | BIOS | `{64-BIT ONLY}` | `this image needs a 64-bit processor, and this one has no 64-bit mode.` then `Start it on a machine with a 64-bit processor instead.` |
 
 ### 12.4 A boot that hangs on a black screen
@@ -3383,6 +3441,8 @@ the harness's Dockerfile and this table to it):
 | tool | Debian package | group | needed for |
 |---|---|---|---|
 | `x86_64-w64-mingw32-gcc` (required) | gcc-mingw-w64-x86-64 | build | the UEFI images, winjump.exe and the x64 vdisk driver (or build in the harness image) |
+| `aarch64-w64-mingw32-clang` | llvm-mingw (release) | build | the AArch64 UEFI images and the ARM64 winjump: llvm-mingw 20261020, ucrt, after gcc-mingw on PATH (its x86_64- and i686- wrappers are clang) (or build in the harness image) |
+| `arm64 libc, libgcc and headers` | libc6-dev:arm64 libgcc-14-dev:arm64 | build | the arm64 Linux programs (falcon-hook, the fixture UKI's init), built by llvm-mingw's clang and ld.lld; dpkg --add-architecture arm64 (or the harness image) |
 | `gcc` (required) | build-essential | build | host tools, tests and the BIOS loader (CC_HOST) |
 | `make` (required) | make | build | the one build |
 | `pkg-config` (required) | pkg-config | build | finds cmocka for the test binaries |
@@ -3395,13 +3455,17 @@ the harness's Dockerfile and this table to it):
 | `i686-w64-mingw32-gcc` | gcc-mingw-w64-i686 | build | make bios: the 32-bit winjump and vdisk driver (or the harness image) |
 | `mtools` | mtools | build | make jump and station install write FAT with mtools |
 | `sd-stub` | systemd-boot-efi | build | the stub a UKI is built on (sign uki, the fixture UKI, the appliance) |
+| `arm64 sd-stub` | systemd-boot-efi:arm64 | build | the stub an arm64 kernel's UKI is built on |
+| `arm64 sbsign, sbverify` | sbsigntool:arm64 (download) libssl3t64:arm64 libuuid1:arm64 | build | the AArch64 appliance image's signer, unpacked to /opt/arm64-sbsigntool, with its arm64 libraries |
 | `zstd` | zstd | build | the appliance image's initramfs |
 | `cryptsetup` (required) | cryptsetup-bin | host tools | mkstick create: p3's LUKS2 |
 | `openssl` (required) | openssl | host tools | mkstick keygen and create: the MOK keypair |
 | `sbsign, sbverify, sbattach` (required) | sbsigntool | host tools | MOK signatures, their check, and stripping one |
 | `mkfs.exfat` (required) | exfatprogs | host tools | p2 |
 | `mkfs.ext4` (required) | e2fsprogs | host tools | p3 and the station partition |
-| `mkfs.fat` (required) | dosfstools | host tools | p1 and a BIOS boot partition |
+| `mkfs.fat` (required) | dosfstools | host tools | p1, a BIOS boot partition, and a FAT32 p2 or p3 |
+| `mkfs.btrfs` | btrfs-progs | host tools | a btrfs p3 (--p3-fs btrfs), and the btrfs fixtures |
+| `mkfs.xfs, xfs_io` | xfsprogs | host tools | an xfs p3 (--p3-fs xfs), and the xfs fixtures |
 | `sgdisk` (required) | gdisk | host tools | GPT |
 | `sfdisk` (required) | fdisk | host tools | MBR |
 | `losetup, blockdev, partx` (required) | util-linux | host tools | images as block devices |
@@ -3419,6 +3483,10 @@ the harness's Dockerfile and this table to it):
 | `objdump, readelf` | binutils | analyzers | tools/check-floor.sh |
 | `qemu-system-x86_64` | qemu-system-x86 | rigs | the UEFI rigs |
 | `qemu-system-i386` | qemu-system-x86 | rigs | the BIOS rigs (SeaBIOS on an i686) |
+| `qemu-system-aarch64` | qemu-system-arm | rigs | the AArch64 UEFI rigs (TCG on an x86 host) |
+| `AAVMF` | qemu-efi-aarch64 | rigs | the AArch64 rigs' firmware, plain and Secure Boot |
+| `U-Boot` | u-boot-qemu | rigs | the devicetree rig: U-Boot's UEFI on virt |
+| `xz` | xz-utils | harness | unpacks the llvm-mingw release into the harness image |
 | `qemu-img, qemu-nbd` | qemu-utils | rigs | rig disks, overlays and the station fixture disks |
 | `OVMF` | ovmf | rigs | the UEFI rigs' firmware, plain and Secure Boot |
 | `swtpm, swtpm_setup` | swtpm swtpm-tools | rigs | the TPM rigs |
@@ -3473,9 +3541,8 @@ release branch's pipeline, says `dev`.
 Every path without a directory is in `build/bin/`. `bios`, `station`,
 `station-legacy`, `jump`, `appliance` and `station-bundle` are not in `all`.
 
-`appliance` takes its kernel and modules out of the Arch ISO
-(`tools/arch-iso.sh`: the copy on this stick's p2 by default, `ARCH_ISO`
-overrides). Build `station-bundle` and `mkstick32` in the harness container
+`appliance` and `appliance-aa64` take their kernel and modules from
+Fedora's packages (`tools/fetch-fedora-kernel.sh`). Build `station-bundle` and `mkstick32` in the harness container
 (13.5), whose image has the 32-bit static libc:
 
     tools/coverage/harness.sh make station-bundle MEMTEST=<file>
@@ -3561,18 +3628,20 @@ flags. `tools/analyze.md` has the suppression policy.
 
 ### 13.4 QEMU rigs
 
-`falcon-efi/tools/run-qemu.sh` boots a loader under OVMF (or SeaBIOS) with
-a window, serial mirrored to the terminal and OVMF's debug port to
-`build/ovmf-debug.log`:
+`falcon-efi/tools/run-qemu.sh` boots a loader under OVMF (or SeaBIOS, or
+AAVMF) with a window, serial mirrored to the terminal and OVMF's debug port
+to `build/ovmf-debug.log`:
 
-    falcon-efi/tools/run-qemu.sh [--secboot|--bios] [--stick] [--headless]
-                                 [qemu args...]
+    falcon-efi/tools/run-qemu.sh [--secboot|--bios] [--aa64] [--stick]
+                                 [--headless] [qemu args...]
 
 | option | effect |
 |---|---|
 | none | `build/bin/falcon-boot.efi` as `\EFI\BOOT\BOOTX64.EFI` on a vvfat ESP (`build/esp`), plus `build/test-exfat.img` when it exists |
 | `--secboot` | Secure Boot OVMF: Fedora's shim 16.1 as the default loader, the signed loader as `grubx64.efi`, and the varstore `MOK_VARS`; needs `make sign` |
 | `--bios` | SeaBIOS on i440fx: no varstore, and only the drives given after the options (and the stick with `--stick`); not with `--secboot` |
+| `--aa64` | the AArch64 loader, `build/bin/falcon-boot-aa64.efi` as `BOOTAA64.EFI` (`build/esp-aa64`), on `qemu-system-aarch64`'s virt machine under AAVMF, with a USB keyboard and ramfb; TCG on an x86-64 host, so slow; the firmware's log is on the serial console; not with `--bios` |
+| `--uboot` | `--aa64` under U-Boot's UEFI instead of AAVMF (`UBOOT_BIN`, default Debian's `/usr/lib/u-boot/qemu_arm64/u-boot.bin`): a devicetree machine, no pflash, no Secure Boot; not with `--secboot` |
 | `--stick` | boot `build/test-stick.img` alone (`STICK_IMG` overrides) |
 | `--headless` | no window; serial to `build/serial.log` (`SERIAL_LOG`), the QEMU monitor on `build/mon.sock` (`MON_SOCK`) |
 
@@ -3583,6 +3652,8 @@ a window, serial mirrored to the terminal and OVMF's debug port to
 | `VARS_FILE` | the writable copy, `build/OVMF_VARS.fd` or `build/OVMF_VARS.secboot.fd`; it is made only when absent, so set a new one whenever `MOK_VARS` changes |
 | `QEMU_MEM` | `512` (MiB) |
 | `OVMF_DIR` | searched: `/usr/share/edk2/OvmfX64`, `/usr/share/edk2/x64`, `/usr/share/edk2-ovmf`, `/usr/share/edk2-ovmf/x64`, `/usr/share/OVMF`, `/usr/share/edk2` |
+| `AAVMF_DIR` | searched: `/usr/share/AAVMF`, `/usr/share/edk2/aarch64`, `/usr/share/edk2/ArmVirtQemu-AARCH64` |
+| `VARS_FILE` with `--aa64` | `build/AAVMF_VARS.fd`, or `.qcow2` where the firmware is qcow2 |
 
 A BIOS rig disk is passed as a drive:
 
@@ -3630,12 +3701,13 @@ It is always rebuilt from the template.
 |---|---|---|
 | `payload` | `build/test/payload.efi` | |
 | `test-iso`, `test-img` | the payload as an El Torito ISO, and a GPT and superfloppy `.img` | sudo |
-| `test-uki` | `build/test/fixture-uki.efi`, an sd-stub UKI, and its signed copy | the test MOK; the Arch ISO (`ARCH_ISO`) |
+| `test-uki` | `build/test/fixture-uki.efi`, an sd-stub UKI, and its signed copy; `build/test/fixture-uki-aa64.efi` and its signed copy are the AArch64 one (`UKI_ARCH=aa64`), on Fedora's arm64 kernel (`tools/fetch-fedora-kernel.sh`) | the test MOK; the Arch ISO (`ARCH_ISO`) |
 | `test-stick` | `build/test-stick.img`, the four-partition stick with the BIOS stages | sudo |
 | `test-station` | `build/test-station.img`, a disk with the station installed | sudo |
 | `test-bios-img` | `build/test-bios.img` (MBR) and `build/test-bios-gpt.img` (GPT) | no root |
 | `test-bios-probe` | `build/memprobe.iso`, a medium that reports the memory map it is handed | `xorriso` |
 | `test-appliance-stick` | `build/appliance/appliance-stick.img` | sudo |
+| `test-appliance-stick-aa64` | `build/appliance/appliance-stick-aa64.img`, the same for AArch64 | sudo |
 
 **Rigs.** Each boots headless and prints a PASS, FAIL or SKIP line per
 case, judged from serial.
@@ -3646,6 +3718,7 @@ case, judged from serial.
 | `test-station-uefi` | the UEFI station's cases, Secure Boot off and on | `build/test-station.img` (made when absent) |
 | `test-station-installed` | stations the installer put on GPT, 4Kn GPT and 4Kn MBR disks | sudo |
 | `test-tpm-rig` | the TPM probe and the UEFI station's TOTP check, swtpm as TPM 2.0 (TIS, CRB) and 1.2, Secure Boot off and on | `swtpm` (else one SKIP line); `build/test-station.img` for the station cases |
+| `test-aa64` | the AArch64 station's cases from the station, installed and TPM rigs, on virt under AAVMF, emulated | sudo; `swtpm` |
 | `test-station-bios` | the BIOS station's chains, drive swap, STATION.INI and next boot under SeaBIOS | |
 | `test-station-fixtures` | the BIOS station in front of the fixture disks of `falcon-bios/tools/fixtures/` (FreeDOS, Windows 98 SE) | sudo (`qemu-nbd`) |
 | `test-station-legacy` | station-legacy on a qcow2 overlay of the A21m's disk, every row | sudo; the A21m image (`A21M_ORIG`, default `/home/vifair/a21m-image/DJSA-210.img`); the rig QEMU for its CF and menu cases; the devlink client (`DEVLINK_CLIENT`) for its DevLink case |
@@ -3654,6 +3727,7 @@ case, judged from serial.
 | `test-jump` | every falcon jump route under SeaBIOS | the rig QEMU for the CF case; `MEMTEST` for the memtest case |
 | `test-devlink` | DevLink recovery off the rig stick on an i586 with 32 MB, and its kernel on the rig QEMU with the PC Card bridge model attached, the CF card brought up as a disk | the ISO (`DEVLINK_ISO`) and client (`DEVLINK_CLIENT`); the rig QEMU for the bridge case; skipped without them |
 | `test-appliance` | the appliance stick under Secure Boot, two appliance runs, then the stick checked on the host | `test-appliance-stick`; sudo |
+| `test-appliance-aa64` | the same on QEMU's virt under AAVMF, emulated | `test-appliance-stick-aa64`; sudo |
 
 The rig QEMU is `qemu-system-i386` with a model of the A21m's PC Card
 bridge. Build it once:
@@ -3723,7 +3797,7 @@ result is skipped unless `--force`. Its options:
 
 | option | default |
 |---|---|
-| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios` and `bios32` are asked for by name |
+| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios`, `bios32` and the AArch64 columns `a64-off a64-ms a64-own` (virt under AAVMF, emulated, each wait `FALCON_CASE_A64_SCALE` (4) times as long) are asked for by name |
 | `--routes "..."` | `dnd chain blessed` |
 | `--jobs N` | 3, each case taking `FALCON_CASE_MEM` (4 GiB) |
 | `--timeout S` | 300 seconds from the keypress to a verdict |
@@ -3735,6 +3809,12 @@ The corpus is `tools/coverage/corpus.tsv`, fetched and checked against its
 pinned SHA-256s with:
 
     tools/coverage/corpus-fetch.sh [--local DIR]... [ID...]
+
+Its arm64 rows run in the a64 columns alone. Two have no download to
+fetch: `efi-shell-aa64-2025.02` is built, in the harness, by
+`tools/coverage/mk-shell-iso.sh` (Debian's EDK II shell in an El Torito
+image), and `memtest86-11-arm64` is `memtest86-usb.img` out of PassMark's
+`memtest86-usb.zip`.
 
 ### 13.6 Shim binaries
 
@@ -3764,9 +3844,10 @@ attaches them to the GitLab release, from the project's package registry.
 | file | what |
 |---|---|
 | `falcon-boot-X.Y.Z-x86_64.tar.gz` | mkstick and the sign tool, and everything mkstick installs |
+| `falcon-boot-X.Y.Z-aarch64.tar.gz` | the same, with mkstick and the sign tool for an arm64 machine |
 | `falcon-station-X.Y.Z.tar.gz` | the BIOS station bundle, for a station with only DevLink recovery (Section 7.8) |
 | `falcon-jump-X.Y.Z.img` | the falcon jump floppy, 1.44 MB, ready to write (Section 9) |
-| `SHA256SUMS` | the three files' SHA-256 |
+| `SHA256SUMS` | the four files' SHA-256 |
 
 Every loader in them is unsigned: `mkstick` signs one with the MOK of the
 stick or station it installs to (Section 11.1). The signing appliance's UKI
@@ -3785,14 +3866,16 @@ changed after it was unpacked.
 ### 14.2 The main tarball
 
 One directory, `falcon-boot-X.Y.Z/`, holding the files a package installs,
-under the paths it installs them to:
+under the paths it installs them to. The two tarballs differ in `usr/bin`
+alone: the data is both machines' loaders, so a stick made on either
+carries both chains.
 
 | path | what |
 |---|---|
-| `usr/bin/falcon-boot-mkstick` | mkstick, x86-64, linked static |
-| `usr/bin/falcon-boot-sign` | the sign tool, x86-64, linked static |
-| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
-| `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager, signed by Microsoft's UEFI CA |
+| `usr/bin/falcon-boot-mkstick` | mkstick, x86-64 or arm64, linked static |
+| `usr/bin/falcon-boot-sign` | the sign tool, x86-64 or arm64, linked static |
+| `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the same three with `-aa64` for AArch64, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
+| `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager for x86-64 and for AArch64, signed by Microsoft's UEFI CA (2011 for x86-64, 2023 for AArch64) |
 | `usr/lib/falcon-boot/memtest/` | memtest86+ 8.10: `memtest-i586.bin` for `--memtest`, `memtest-x86_64.efi` for `--memtest-efi` |
 | `usr/share/doc/falcon-boot/` | `README.md`, this Manual, `DESIGN.md`, `LICENSE`, `THIRD-PARTY.md` (shim's and memtest86+'s licences and sources) |
 | `VERSION`, `MANIFEST` | the build's version string, and every other file's SHA-256 |
@@ -3824,7 +3907,8 @@ refused.
 
 **Arch.** The tag's pipeline builds it from `packaging/arch/PKGBUILD` into
 the `falcon` repository on the dl host (`tools/release/publish-arch.sh`),
-which holds the current version alone. The packages and the repository
+for `x86_64` and `aarch64` (Arch Linux ARM), which holds the current
+version alone. The packages and the repository
 database are signed with the falcon repository key,
 `6405 F892 A108 F8FB 0576  5FF8 0EC4 411B 66DB 5626`. Trust it once:
 

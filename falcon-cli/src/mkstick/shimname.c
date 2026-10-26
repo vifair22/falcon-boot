@@ -9,6 +9,10 @@
 #include <common/log.h>
 #include <common/util.h>
 #include <mkstick/disk.h>
+#include <pe/pe.h>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 /* A signed shim is around one megabyte; the cap is generous enough that a
  * fatter future one still parses and small enough that pointing this at the
@@ -60,6 +64,32 @@ static int is_efi_basename(const char *s)
     return strcasecmp(s + len - 4u, ".efi") == 0;
 }
 
+/* The PE machine of the image at path; 0 when it is not one. */
+static unsigned pe_machine_of(const char *path)
+{
+    uint8_t head[4096];
+    pe_hdr h;
+    ssize_t r;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+
+    if (fd < 0)
+        return 0;
+    r = pread(fd, head, sizeof head, 0);
+    (void)close(fd);
+    if (r <= 0 || pe_parse(head, (size_t)r, &h) != PE_OK)
+        return 0;
+    return h.machine;
+}
+
+const char *shim_arch(unsigned machine)
+{
+    if (machine == PE_MACHINE_AMD64)
+        return "x64";
+    if (machine == PE_MACHINE_ARM64)
+        return "aa64";
+    return NULL;
+}
+
 /* The names shim uses for the OTHER two binaries it can launch. They are
  * stored with a single backslash and so never match the next-stage rule; the
  * list exists to keep them out of the single-backslash fallback. */
@@ -67,7 +97,7 @@ static int is_helper_name(const char *s)
 {
     static const char *const helpers[] = {
         "mmx64.efi", "MokManager.efi", "fbx64.efi", "fallback.efi",
-        "shimx64.efi", "shim.efi"
+        "shimx64.efi", "shim.efi", "mmaa64.efi", "fbaa64.efi", "shimaa64.efi"
     };
     size_t i;
 
@@ -184,6 +214,7 @@ static void visit(const char *text, void *ctx)
     if (!is_efi_basename(text + 1))
         return;
     if (strcasecmp(text + 1, "mmx64.efi") == 0 ||
+        strcasecmp(text + 1, "mmaa64.efi") == 0 ||
         strcasecmp(text + 1, "MokManager.efi") == 0)
         candidate_add(&s->mokmanager, text + 1);
     else if (!is_helper_name(text + 1))
@@ -258,10 +289,16 @@ cli_status shim_mokmanager_name(const char *shim_path, char *out, size_t cap)
                          s.mokmanager.count);
     }
 
-    log_warn("%s names no MokManager binary; installing it as mmx64.efi",
-             shim_path);
-    if (snprintf(out, cap, "%s", "mmx64.efi") < 0)
-        return set_error(CLI_ERR_INTERNAL, "formatting the MM name");
+    {
+        const char *arch = shim_arch(pe_machine_of(shim_path));
+
+        if (arch == NULL)
+            arch = "x64";
+        log_warn("%s names no MokManager binary; installing it as mm%s.efi",
+                 shim_path, arch);
+        if (snprintf(out, cap, "mm%s.efi", arch) < 0)
+            return set_error(CLI_ERR_INTERNAL, "formatting the MM name");
+    }
     return CLI_OK;
 }
 
@@ -271,43 +308,49 @@ cli_status shim_mokmanager_name(const char *shim_path, char *out, size_t cap)
  * works. The order is: an unprefixed shimx64.efi (what a user who staged one
  * file themselves would have), then the vendor and version DESIGN Section 4
  * pins, then a unique match, then a refusal that lists what it saw. */
-cli_status shim_find(const char *dir, char *out, size_t cap)
+cli_status shim_find(const char *dir, const char *arch, char *out, size_t cap)
 {
-    static const char *const preferred[] = {
-        "shimx64.efi", "fedora-16.1-shimx64.efi"
-    };
+    static const char *const prefixes[] = { "", "fedora-16.1-" };
     size_t i;
 
-    for (i = 0; i < sizeof preferred / sizeof preferred[0]; i++) {
+    for (i = 0; i < sizeof prefixes / sizeof prefixes[0]; i++) {
+        char name[64];
         char path[MKS_PATH_MAX];
+        const char *got;
 
-        if (util_join(path, sizeof path, dir, preferred[i]) != CLI_OK)
+        (void)snprintf(name, sizeof name, "%sshim%s.efi", prefixes[i], arch);
+        if (util_join(path, sizeof path, dir, name) != CLI_OK ||
+            !util_is_file(path))
             continue;
-        if (util_is_file(path)) {
-            if (snprintf(out, cap, "%s", path) < 0)
-                return set_error(CLI_ERR_RANGE, "shim path too long");
-            return CLI_OK;
-        }
+        got = shim_arch(pe_machine_of(path));
+        if (got == NULL || strcmp(got, arch) != 0)
+            return set_error(CLI_ERR_INVALID,
+                             "%s is not a shim for %s (its PE machine says "
+                             "%s)", path, arch, got != NULL ? got : "other");
+        if (snprintf(out, cap, "%s", path) < 0)
+            return set_error(CLI_ERR_RANGE, "shim path too long");
+        return CLI_OK;
     }
     return set_error(CLI_ERR_NOTFOUND,
-                     "no shim found in %s (looked for shimx64.efi and "
-                     "fedora-16.1-shimx64.efi); run "
+                     "no shim found in %s (looked for shim%s.efi and "
+                     "fedora-16.1-shim%s.efi); run "
                      "falcon-efi/tools/shim-spike/fetch-shims.sh to stage "
-                     "the pinned packages, or pass --shim <dir>", dir);
+                     "the pinned packages, or pass --shim <dir>", dir, arch,
+                     arch);
 }
 
 /* MokManager sits beside the shim under the same vendor prefix, which is how
  * fetch-shims.sh stages it. `wanted` is the name shim itself will look for at
  * boot, read out of the shim binary. */
-cli_status shim_find_mokmanager(const char *shim_path, const char *wanted,
-                                char *out, size_t cap)
+cli_status shim_find_mokmanager(const char *shim_path, const char *arch,
+                                const char *wanted, char *out, size_t cap)
 {
     char dir[MKS_PATH_MAX];
     const char *base = util_basename(shim_path);
     size_t dirlen = (size_t)(base - shim_path);
-    const char *tail = "shimx64.efi";
+    char tail[32];
     size_t baselen = strlen(base);
-    size_t taillen = strlen(tail);
+    size_t taillen;
     char candidate[MKS_PATH_MAX];
 
     if (dirlen >= sizeof dir)
@@ -316,6 +359,8 @@ cli_status shim_find_mokmanager(const char *shim_path, const char *wanted,
     if (dir[0] == '\0')
         (void)snprintf(dir, sizeof dir, "./");
 
+    (void)snprintf(tail, sizeof tail, "shim%s.efi", arch);
+    taillen = strlen(tail);
     /* fedora-16.1-shimx64.efi -> fedora-16.1-mmx64.efi */
     if (baselen > taillen && strcmp(base + baselen - taillen, tail) == 0) {
         if (snprintf(candidate, sizeof candidate, "%s%.*s%s", dir,

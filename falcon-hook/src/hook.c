@@ -294,13 +294,13 @@ static int disk_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 /* How the disk is recognised. The map names the ISO library by its
  * install ID and where the partition starts (media/extmap.h), and the hook
  * confirms a candidate the way the loader found the library in the first
- * place: it mounts the exFAT volume at that offset and reads its /.falcon
- * record (media/extfind.h). That links falcon-core's exFAT driver, the fs
- * registry trimmed to it (fs_reg_exfat.c) and the record reader into the
- * hook: about 7 KB of stripped binary at either width (33.6 to 41.0 KB
- * x86-64, 37.4 to 44.4 KB i686).
+ * place: it mounts the volume at that offset and reads its /.falcon record
+ * (media/extfind.h). That links falcon-core's exFAT and FAT drivers, the
+ * library registry (fs_reg_library.c) and the record reader into the hook:
+ * about 11 KB of stripped binary at either width (33.6 to 44.7 KB x86-64,
+ * 37.4 to 48.5 KB i686).
  * The cheaper tests do not name a partition: every disk has something at
- * LBA 2048, a second falcon stick has an exFAT volume there too, and only
+ * LBA 2048, a second falcon stick has a library there too, and only
  * the record tells them apart. Nothing reads a partition table: the start
  * LBA says where to look and the record says whether it is ours, so an MBR
  * stick is found as a GPT one is. */

@@ -20,6 +20,7 @@ STICK_EFI += $(CORE_FS) $(CORE_PE) $(CORE_LUKS) $(CORE_CRYPTO)
 STICK_EFI += $(EFI_MOD_secboot) $(CORE_TRUST) $(EFI_MOD_secboot_trust)  # state, and the predictions
 STICK_EFI += $(EFI_MOD_iso) $(CORE)/media/family.c $(CORE)/media/cpio.c
 STICK_EFI += $(EFI_MOD_direct) $(EFI_MOD_bsd)
+STICK_EFI += $(CORE_GZ)                # an arm64 vmlinuz is a gzipped Image
 STICK_EFI += $(EFI_MOD_win) $(CORE_WIM) $(WINJUMP_BLOB)
 STICK_EFI += $(addprefix $(CORE)/media/,bootcfg.c bootfs.c eltorito.c medium.c \
 	hookcmd.c grubcfg.c bsdmd.c extmap.c survey.c)
@@ -33,6 +34,7 @@ STICK_EFI += $(CORE_LIBC) $(CORE_UCS2)
 $(eval $(call efi_app,stick,falcon-boot,$(STICK_EFI)))
 
 $(EFI_OBJ)/$(STICK)/efi_main.o $(EFI_OBJ)/$(STICK)/efi_sbat.o: build/version.h
+$(EFI_AA64_OBJ)/$(STICK)/efi_main.o $(EFI_AA64_OBJ)/$(STICK)/efi_sbat.o: build/version.h
 
 sbat-check: sbat-check-stick
 
@@ -51,6 +53,7 @@ STICK_BIOS += $(CORE_PART) $(CORE_FS) $(CORE_MEDIA) $(CORE_PE) $(CORE_CRYPTO)
 STICK_BIOS += $(CORE_LUKS) $(CORE_WIM) $(CORE_LIBC) $(CORE_UCS2) $(CORE_TUI)
 STICK_BIOS += $(CORE)/manifest/manifest.c
 STICK_BIOS += $(CORE_BIOSBOOT)         # the {EFI ONLY} and {64-BIT ONLY} tags
+STICK_BIOS += $(CORE_UEFIBOOT)         # which UEFI machine: {ARM64 ONLY}
 STICK_BIOS += $(CORE_IDENT) $(CORE_IDENT_FS)  # the records, and the library's ID for the extent map
 
 $(eval $(call bios_app,stick,$(BIOS_STAGE3),\

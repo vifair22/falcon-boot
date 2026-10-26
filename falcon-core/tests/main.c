@@ -73,6 +73,8 @@ int main(void)
     failed += run_xpsetup_tests();
     failed += run_eltorito_tests();
     failed += run_fat_tests();
+    failed += run_btrfs_tests();
+    failed += run_xfs_tests();
     failed += run_medium_tests();
     failed += run_bootfs_tests();
     failed += run_uefiboot_tests();
