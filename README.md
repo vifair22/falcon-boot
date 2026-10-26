@@ -128,9 +128,10 @@ sudo falcon-boot-mkstick create /dev/disk/by-id/usb-<your stick> --force
 sudo falcon-boot-mkstick bios /dev/disk/by-id/usb-<your stick>
 ```
 
-With Secure Boot on, the first boot opens MokManager: enroll
-`falcon-boot.cer` from the stick's boot partition and reboot (Manual
-Section 3.1). `docs/Manual.md` is the full reference: the menu, every
+With Secure Boot on, the first boot stops at shim's `Verification
+failed: (0x1A) Security Violation`: press Enter, press a key for
+MokManager, then Enroll key from disk, `FALCONESP`, `falcon-boot.cer`,
+Continue, Yes, Reboot. Manual Section 3.1 has every screen. `docs/Manual.md` is the full reference: the menu, every
 route, blessing, the personal OS, the station and `STATION.INI`, jump, every
 `falcon-boot-mkstick` command, and what to do on each failure page.
 

@@ -1575,8 +1575,9 @@ out:
                      "it boots this stick as it booted the last one.",
                      cert_in);
         else if (given == NULL)
-            log_info("First boot with Secure Boot ON: shim launches "
-                     "MokManager; enroll p1:/%s, reboot.", MKS_ESP_CERT_NAME);
+            log_info("First boot with Secure Boot ON: in MokManager, "
+                     "Enroll key from disk, FALCONESP, %s, Continue, Yes, "
+                     "Reboot (Manual Section 3.1).", MKS_ESP_CERT_NAME);
         if (!plan_fs.has_p3)
             log_warn("no shelf: no personal OS and no signing appliance on "
                      "this stick, and the only copy of the MOK private key is "
