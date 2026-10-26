@@ -361,7 +361,7 @@ fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3]
     sudo "$MKSTICK" --quiet create "$LOOP" --force \
         --p1-size 300M --iso-size 128M --p2-fs "$2" "${shelf[@]}" \
         --shim build/shim/bins --loader build/bin/falcon-boot.efi \
-        --cn "falcon-boot $1 rig" >"$log" 2>&1 || { rm -f "$R/pass"; detach; return 1; }
+        --cn "falcon-boot $1 rig" --no-appliance >"$log" 2>&1 || { rm -f "$R/pass"; detach; return 1; }
     rm -f "$R/pass"
     p2=$(sudo "$MKSTICK" ident "$LOOP" | awk -F '\t' '$2 == "library" { print $1 }')
     [[ -n "$p2" ]] || { detach; return 1; }
@@ -514,7 +514,7 @@ build_4kn() {
         --p1-size 300M --iso-size 128M --p3-size 128M --p4-size rest \
         --passphrase-file "$R/pass" --shim build/shim/bins \
         --loader build/bin/falcon-boot.efi --uki build/test/fixture-uki.efi \
-        --cn "falcon-boot 4Kn rig" >"$R/stick-4kn.build" 2>&1
+        --cn "falcon-boot 4Kn rig" --no-appliance >"$R/stick-4kn.build" 2>&1
     rm -f "$R/pass"
     p2=$(sudo "$MKSTICK" ident "$LOOP" | awk -F '\t' '$2 == "library" { print $1 }')
     [[ -n "$p2" ]] || { echo "ERROR: the 4Kn stick has no library" >&2; exit 1; }

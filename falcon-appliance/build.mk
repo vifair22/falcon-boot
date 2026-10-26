@@ -4,6 +4,7 @@
 # falcon-appliance/image; mkstick signs it and stages it on p3.
 
 APPLIANCE_UKI   := build/appliance/appliance-uki.efi
+APPLIANCE_UKI_A64 := build/appliance/appliance-uki-aa64.efi
 APPLIANCE_STICK := build/appliance/appliance-stick.img
 
 APPLIANCE := falcon-appliance/src

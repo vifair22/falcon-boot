@@ -1600,7 +1600,12 @@ built as a portable static binary for both:
    entry and falcon-hook as a UKI with the hooked cmdline (7.2), or takes a
    FreeBSD medium's or memtest86+'s own loader, signs it, stages it with its
    manifest record per Section 8.1, and reboots to the loader. Windows media is reported and left
-   alone.
+   alone. The release ships it unsigned for both machines
+   (`/usr/lib/falcon-boot/appliance/`), and `mkstick create` signs each one
+   the stick has a loader for with the stick's MOK and stages it on an
+   encrypted p3 by default (`--no-appliance` to leave it off). A plaintext
+   p3 gets none: the appliance reads the private key off the encrypted
+   one.
 
 **Residuals:**
 

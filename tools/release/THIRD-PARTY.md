@@ -1,7 +1,8 @@
 # Third-party binaries in a falcon-boot release
 
 falcon-boot itself is GPL-3.0-or-later (LICENSE). A release also carries two
-programs it did not build, unmodified, each under its own licence.
+programs it did not build, unmodified, each under its own licence, and the
+signing appliance, which is built from others.
 
 ## shim and MokManager
 
@@ -31,3 +32,25 @@ memtest86+ 8.10 as released, `mt86p_810_i586` and `mt86p_810_x86_64` from
 
 - Licence: GPL-2.0.
 - Source: <https://github.com/memtest86plus/memtest86plus/releases/tag/v8.10>.
+
+## The signing appliance
+
+`usr/lib/falcon-boot/appliance/appliance-uki.efi` and
+`appliance-uki-aa64.efi`: the on-stick signing appliance (DESIGN Section
+7.5), a UKI built by `falcon-appliance/image/mk-appliance.sh`. Besides
+falcon-boot's own PID 1 and `falcon-boot-sign`, each carries, unmodified:
+
+- Fedora's kernel and eight of its modules (exfat, loop, fat, vfat,
+  usb-storage, uas, i2c-hid, i2c-hid-acpi), at the build
+  `tools/fetch-fedora-kernel.sh` pins. Licence: GPL-2.0.
+- `sbsign` and `sbverify` (sbsigntool, GPL-3.0-or-later with an OpenSSL
+  exception) and the libraries they load: glibc (LGPL-2.1-or-later),
+  OpenSSL's libcrypto (Apache-2.0), zlib (Zlib) and zstd (BSD-3-Clause or
+  GPL-2.0), from Debian.
+- systemd-stub, `linuxx64.efi.stub` and `linuxaa64.efi.stub`
+  (LGPL-2.1-or-later), from Debian's systemd-boot-efi.
+
+`appliance-uki.sources` and `appliance-uki-aa64.sources`, beside each UKI,
+name the exact builds: the Fedora kernel release with its source package
+URL, and each Debian package with its source package and version, as the
+build that made the release found them.
