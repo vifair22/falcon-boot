@@ -40,7 +40,6 @@
 #include <mkstick/records.h>
 #include <mkstick/shimname.h>
 
-#include <fs/exfat.h>
 #include <fs/fs.h>
 #include <ident/ident.h>
 #include <luks/luks.h>
@@ -341,76 +340,17 @@ static void check_plain_shelf(tally *t, disk_io *io)
           "readable by anyone holding the stick)", MKS_P3_KEY_NAME);
 }
 
-/* ---- p2: the exFAT ISO library ---- */
-
-static int name_is(const exfat_dirent *e, const char *ascii)
-{
-    size_t len = strlen(ascii);
-    size_t i;
-
-    if ((size_t)e->name_len != len)
-        return 0;
-    for (i = 0; i < len; i++) {
-        uint16_t a = e->name[i];
-        uint16_t b = (uint16_t)ascii[i];
-
-        if (a >= 'A' && a <= 'Z')
-            a = (uint16_t)(a + 32);
-        if (b >= 'A' && b <= 'Z')
-            b = (uint16_t)(b + 32);
-        if (a != b)
-            return 0;
-    }
-    return 1;
-}
-
-/* Does this entry's name end in ".iso"? The library's contents are
- * drag-and-dropped by the user, so the count is informational, not a check. */
-static int name_is_iso_suffix(const exfat_dirent *e)
-{
-    static const char suffix[] = ".iso";
-    size_t n = (size_t)e->name_len;
-    size_t i;
-
-    if (n < 4u)
-        return 0;
-    for (i = 0; i < 4u; i++) {
-        uint16_t c = e->name[n - 4u + i];
-
-        if (c >= 'A' && c <= 'Z')
-            c = (uint16_t)(c + 32);
-        if (c != (uint16_t)suffix[i])
-            return 0;
-    }
-    return 1;
-}
-
-static int find_child(exfat_vol *v, exfat_dir *d, const char *name,
-                      exfat_dirent *out)
-{
-    exfat_dirent e;
-    int rc;
-
-    (void)v;
-    while ((rc = exfat_dir_next(d, &e)) == 1) {
-        if (name_is(&e, name)) {
-            *out = e;
-            return 1;
-        }
-    }
-    return (rc < 0) ? rc : 0;
-}
+/* ---- p2: the ISO library ---- */
 
 static void check_iso_library(tally *t, const char *path,
                               const part_entry *p,
                               uint32_t sector)
 {
-    static exfat_vol vol;
-    static exfat_dir dir;
-    static exfat_dir sub;
+    static fs_vol vol;
+    static fs_dir dir;
     disk_io io;
-    exfat_dirent falcon = { { 0 }, 0, 0, 0, 0, 0, 0 };
-    exfat_dirent blessed;
+    fs_dirent e;
+    const fs_ops *ops;
     unsigned isos = 0;
     int rc;
 
@@ -420,49 +360,35 @@ static void check_iso_library(tally *t, const char *path,
         return;
     }
 
-    rc = exfat_mount(&vol, disk_io_read, &io);
-    if (rc != 0) {
-        check(t, 0, "no readable exFAT volume (exfat_mount returned %d)", rc);
+    ops = fs_identify(disk_io_read, &io, FS_HINT_ISO);
+    if (ops == NULL || fs_mount(&vol, ops, disk_io_read, &io) != FS_OK) {
+        check(t, 0, "no filesystem the loader reads");
         disk_io_close(&io);
         return;
     }
-    check(t, 1, "exFAT volume mounts");
+    check(t, 1, "%s volume mounts", ops->name);
+    /* The library is the drag-and-drop target and WinPE's way to the ISO;
+     * a filesystem neither reads leaves the stick half working. */
+    check(t, ops->extents != NULL,
+          "%s resolves a file to its extents (DESIGN Section 6.2)",
+          ops->name);
 
-    if (exfat_dir_open_root(&vol, &dir) != 0) {
+    if (fs_dir_open_root(&vol, &dir) != FS_OK) {
         check(t, 0, "the root directory could not be read");
         disk_io_close(&io);
         return;
     }
-
-    /* Count ISOs while looking for the reserved directory: one pass, and the
-     * count is what tells the user whether the library is actually populated. */
-    {
-        exfat_dirent e;
-        int found_falcon = 0;
-
-        while ((rc = exfat_dir_next(&dir, &e)) == 1) {
-            if (name_is(&e, "falcon") && e.is_dir) {
-                falcon = e;
-                found_falcon = 1;
-            } else if (!e.is_dir && e.name_len > 4u &&
-                       name_is_iso_suffix(&e)) {
-                isos++;
-            }
-        }
-        if (rc < 0)
-            check(t, 0, "reading the root directory failed (%d)", rc);
-        check(t, found_falcon, "/%s present", "falcon");
-        if (!found_falcon) {
-            disk_io_close(&io);
-            return;
-        }
+    /* The count tells the user whether the library is populated; the
+     * contents are theirs, so it is not a check. */
+    while ((rc = fs_dir_next(&dir, &e)) == 1) {
+        if (!e.is_dir && fs_name_ends_ascii(e.name, ".iso"))
+            isos++;
     }
+    if (rc < 0)
+        check(t, 0, "reading the root directory failed (%d)", rc);
 
-    if (exfat_dir_open(&vol, &sub, &falcon) != 0 ||
-        find_child(&vol, &sub, "blessed", &blessed) != 1)
-        check(t, 0, "/%s missing", MKS_P2_BLESSED_DIR);
-    else
-        check(t, blessed.is_dir != 0, "/%s present", MKS_P2_BLESSED_DIR);
+    rc = fs_lookup(&vol, "/" MKS_P2_BLESSED_DIR, &dir, &e);
+    check(t, rc == FS_OK && e.is_dir, "/%s present", MKS_P2_BLESSED_DIR);
 
     log_info("  %-4s %u ISO%s in the library", "--", isos,
              (isos == 1u) ? "" : "s");

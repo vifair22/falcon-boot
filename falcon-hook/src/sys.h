@@ -49,7 +49,12 @@ void sys_exit(int code) __attribute__((noreturn));
 #define HOOK_O_CREAT    0100
 #define HOOK_O_TRUNC    01000
 #define HOOK_O_CLOEXEC  02000000
+/* O_DIRECTORY is one of the few that differ: on arm64 0200000 is O_DIRECT. */
+#if defined(__aarch64__)
+#define HOOK_O_DIRECTORY 040000
+#else
 #define HOOK_O_DIRECTORY 0200000
+#endif
 #define HOOK_S_IFBLK    0060000
 #define HOOK_S_IFCHR    0020000
 #define HOOK_EEXIST     17

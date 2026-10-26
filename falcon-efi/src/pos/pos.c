@@ -8,6 +8,7 @@
 #include <media/osrel.h>
 #include <media/strows.h>
 
+#include <efi/arch.h>
 #include <loader/loadops.h>
 #include <loader/bli.h>
 
@@ -669,7 +670,10 @@ static const CHAR16 *mount_advice(int rc, const CHAR16 *otherwise)
         buf[n] = 0;
         return buf;
     }
-    if (rc == FS_ERR_NEEDS_RECOVERY || rc == FS_ERR_DIRTY)
+    if (rc == FS_ERR_NEEDS_RECOVERY)
+        return L"the filesystem's log needs Linux to finish it; mount it "
+               L"once from Linux.";
+    if (rc == FS_ERR_DIRTY)
         return L"the filesystem was not cleanly unmounted; run fsck on it "
                L"from Linux.";
     return otherwise;
@@ -687,7 +691,8 @@ static int plain_shelf_usable(discover_dev *dev, const fs_ops *ops)
     int ok = 0;
 
     if (mount_shelf(discover_read, dev, ops) == FS_OK)
-        ok = (shelf_collect(&g_images, &g_fs) == 1);
+        ok = (shelf_collect(&g_images, &g_fs) == 1 &&
+              shelf_keep_machine(&g_images, &g_fs, EFI_ARCH_MACHINE) != 0);
 
     /* A look, not a claim: pos_boot mounts for itself when the entry is
      * picked, so nothing here stays live, and the caches go the same way the
@@ -1253,7 +1258,8 @@ UINTN pos_plain_images(EFI_SYSTEM_TABLE *st, pos_image *out, UINTN cap)
             crypto_wipe(&g_fs, sizeof g_fs);
             continue;
         }
-        if (shelf_collect(&g_images, &g_fs) == 1) {
+        if (shelf_collect(&g_images, &g_fs) == 1 &&
+            shelf_keep_machine(&g_images, &g_fs, EFI_ARCH_MACHINE) != 0) {
             shelf_label(&g_images, &g_fs);
             for (k = 0; k < g_images.n && n < cap; k++) {
                 const fs_dirent *e = &g_images.uki[k].ent;
@@ -1424,8 +1430,11 @@ static EFI_STATUS boot_shelf(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
 
     stage(result, L"looking for a UKI");
     rc = shelf_collect(&g_images, &g_fs);
+    if (rc == 1 && shelf_keep_machine(&g_images, &g_fs, EFI_ARCH_MACHINE) == 0)
+        rc = 0;
     if (rc != 1) {
-        result->advice = L"no *.efi image was found in /uki or /EFI/Linux.";
+        result->advice = L"no *.efi image for this machine was found in /uki "
+                         L"or /EFI/Linux.";
         status = (rc < 0) ? EFI_DEVICE_ERROR : EFI_NOT_FOUND;
         goto out_close;
     }

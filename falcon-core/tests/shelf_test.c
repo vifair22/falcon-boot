@@ -389,6 +389,43 @@ static void test_label_unreadable_keeps_name(void **state)
     assert_int_equal(g_shelf.uki[0].named, 0);
 }
 
+/* Marks a built image as a PE32+ for machine. */
+static void for_machine(int idx, uint16_t machine)
+{
+    uint8_t *img = g_nodes[idx].data;
+
+    put16(img + PE_AT + 4, machine);
+    put16(img + PE_AT + 24, 0x20Bu);
+}
+
+/* Each machine keeps its own architecture's images and drops the other
+ * 64-bit one's; an image whose machine is not known is kept. */
+static void test_keep_machine(void **state)
+{
+    int uki, x64, aa64, other;
+
+    (void)state;
+    uki = add(-1, "uki", 1);
+    x64 = add(uki, "a-x64.efi", 0);
+    aa64 = add(uki, "b-aa64.efi", 0);
+    other = add(uki, "c-plain.efi", 0);
+    image(x64, NULL, NULL);
+    image(aa64, NULL, NULL);
+    image(other, NULL, NULL);
+    for_machine(x64, 0x8664u);
+    for_machine(aa64, 0xAA64u);
+
+    assert_int_equal(shelf_collect(&g_shelf, &g_vol), 1);
+    assert_int_equal(shelf_keep_machine(&g_shelf, &g_vol, 0xAA64u), 2);
+    assert_string_equal(narrow(g_shelf.uki[0].ent.name), "b-aa64.efi");
+    assert_string_equal(narrow(g_shelf.uki[1].ent.name), "c-plain.efi");
+
+    assert_int_equal(shelf_collect(&g_shelf, &g_vol), 1);
+    assert_int_equal(shelf_keep_machine(&g_shelf, &g_vol, 0x8664u), 2);
+    assert_string_equal(narrow(g_shelf.uki[0].ent.name), "a-x64.efi");
+    assert_string_equal(narrow(g_shelf.uki[1].ent.name), "c-plain.efi");
+}
+
 static void test_is_appliance(void **state)
 {
     fs_dirent e;
@@ -439,6 +476,7 @@ int run_shelf_tests(void)
         cmocka_unit_test_setup(test_label_fixture_set, setup),
         cmocka_unit_test_setup(test_label_unique_needs_nothing, setup),
         cmocka_unit_test_setup(test_label_unreadable_keeps_name, setup),
+        cmocka_unit_test_setup(test_keep_machine, setup),
         cmocka_unit_test_setup(test_is_appliance, setup),
         cmocka_unit_test_setup(test_wipe, setup),
     };

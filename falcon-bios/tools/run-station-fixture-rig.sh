@@ -210,6 +210,8 @@ PY
 # and TCG on this host is past it; -icount pins the guest at 250 MHz
 # (tools/fixtures/mk-win9x-fixture.sh --icount). Set per case by run_case.
 ICOUNT_ARGS=()
+# Fixed, and inside US DST as the fixtures' own clocks were (2026-09-27).
+RTC_BASE=2026-09-27T12:00:00
 start() {     # start DISK0 [DISK1]
     local drives=() d i=0
     for d in "$@"; do
@@ -220,9 +222,13 @@ start() {     # start DISK0 [DISK1]
         i=$(( i + 1 ))
     done
     rm -f "$R/serial.log" "$R/mon.sock"
+    # The guests' clock is the day the fixtures were made, not today's:
+    # Windows 9x moves its clock at a DST change it boots across and puts a
+    # dialog over the desktop until someone presses OK, which on the last
+    # Sunday of October (its old US rule) failed every Windows case.
     "$QEMU" -L /usr/share/qemu -machine pc -accel tcg -cpu pentium2 -m 128 \
         "${ICOUNT_ARGS[@]}" \
-        -vga cirrus -nic none -rtc base=localtime -display none \
+        -vga cirrus -nic none -rtc base="$RTC_BASE" -display none \
         "${drives[@]}" -snapshot -boot order=c \
         -serial file:"$R/serial.log" \
         -monitor unix:"$R/mon.sock",server,nowait >"$R/qemu.log" 2>&1 &

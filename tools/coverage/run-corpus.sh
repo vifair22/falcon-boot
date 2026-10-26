@@ -24,7 +24,8 @@
 #                             state is a full pass over the corpus; `bios`
 #                             and `bios32` are the SeaBIOS columns and are
 #                             not among them either, so they are asked for
-#                             by name)
+#                             by name; so are `a64-off a64-ms a64-own`,
+#                             the AArch64 columns, emulated and slow)
 #   --routes "dnd chain blessed"  which routes (default all three)
 #   --jobs N                  cases in flight at once (default 3; each takes
 #                             FALCON_CASE_MEM, 4 GiB by default). KEEP IT
@@ -112,6 +113,8 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
     # blessing is a UEFI act.
     arch=${arch:-x86_64}
     [[ "$arch" == i686 ]] && blessable=0
+    stick_args=()
+    [[ "$arch" == aarch64 ]] && stick_args=(--arm64)
 
     # A bless the sign tool refused is remembered beside the stick, so it is
     # not retried every run; deleting the marker retries it.
@@ -130,12 +133,14 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
         if has_route blessed && [[ $blessable -eq 1 ]]; then
             args+=(--blessed)
         fi
-        tools/coverage/mk-case-stick.sh "$iso" "$stick" "${args[@]}" ||
+        tools/coverage/mk-case-stick.sh "$iso" "$stick" "${stick_args[@]}" \
+            "${args[@]}" ||
             touch "$stick.unblessable"
     elif has_route blessed && [[ $blessable -eq 1 && ! -f "$stick.blessed.img" &&
                                  ! -f "$stick.unblessable" ]]; then
         echo "== $id: blessing"
-        tools/coverage/mk-case-stick.sh "$iso" "$stick" --blessed --reuse ||
+        tools/coverage/mk-case-stick.sh "$iso" "$stick" "${stick_args[@]}" \
+            --blessed --reuse ||
             touch "$stick.unblessable"
     fi
 
@@ -156,6 +161,20 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
             if [[ "$arch" == i686 && "$st" != bios* ]]; then
                 mkdir -p "$out"
                 printf 'N/A\ta 32-bit ISO; the UEFI loader is x86-64\t0\n' \
+                    > "$out/result"
+                continue
+            fi
+            # A machine runs its own architecture's ISOs: the arm64 ones in
+            # the a64 columns, and only they.
+            if [[ "$arch" == aarch64 && "$st" != a64-* ]]; then
+                mkdir -p "$out"
+                printf 'N/A\tan arm64 ISO; this machine is x86\t0\n' \
+                    > "$out/result"
+                continue
+            fi
+            if [[ "$arch" != aarch64 && "$st" == a64-* ]]; then
+                mkdir -p "$out"
+                printf 'N/A\tan x86 ISO on an AArch64 machine\t0\n' \
                     > "$out/result"
                 continue
             fi

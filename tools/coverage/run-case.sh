@@ -49,7 +49,8 @@
 # and ERROR for a harness problem (QEMU would not start, the menu never came).
 #
 # Usage: tools/coverage/run-case.sh STICK STATE ROUTE OUTDIR [TIMEOUT]
-#   STATE    off | ms | own | moksb | bios | bios32   (tools/coverage/states.sh)
+#   STATE    off | ms | own | moksb | bios | bios32 | a64-off | a64-ms |
+#            a64-own   (tools/coverage/states.sh)
 #   ROUTE    dnd      Enter on the image row: whatever the loader does by
 #                     default with an unblessed image
 #            chain    the chainload key: the ISO's own EFI loader, or
@@ -155,6 +156,29 @@ if [[ "$STATE_BIOS" -eq 1 ]]; then
     # disk, so the BIOS boots it as 0x80.
     DRIVES=(-drive "id=stick,format=raw,file=$STICK,snapshot=on")
 fi
+# AArch64: virt, emulated, so every wait is SCALE times as long. The stick
+# is USB storage on xhci, which every arm64 OS and WinPE drive inbox; the
+# NIC is virtio, which every arm64 Linux has and Windows does not need.
+QEMU_BIN=qemu-system-x86_64
+ACCEL=(-enable-kvm -cpu "$STATE_CPU")
+NIC=e1000e
+VGA=(-vga std)
+SCALE=1
+if [[ "$STATE_ARCH" == aa64 ]]; then
+    QEMU_BIN=qemu-system-aarch64
+    ACCEL=(-accel tcg,thread=multi -cpu max)
+    NIC=virtio-net-pci
+    VGA=(-device ramfb)
+    SCALE=${FALCON_CASE_A64_SCALE:-4}
+    MACHINE=(-machine virt)
+    FIRMWARE=(-drive if=pflash,format="$(fw_format "$STATE_CODE")",readonly=on,file="$STATE_CODE"
+              -drive if=pflash,format="$(fw_format "$VARS")",file="$VARS")
+    DRIVES=(-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0
+            -drive if=none,id=stick,format=raw,file="$STICK",snapshot=on
+            -device usb-storage,bus=xhci.0,drive=stick)
+    TIMEOUT=$(( TIMEOUT * SCALE ))
+    MENU_WAIT=$(( MENU_WAIT * SCALE ))
+fi
 
 QPID=
 finish() {   # finish VERDICT REASON
@@ -249,16 +273,16 @@ trap 'finish ERROR "interrupted"' INT TERM
 export TMPDIR="$OUTDIR"
 
 T0=$(date +%s)
-qemu-system-x86_64 \
+"$QEMU_BIN" \
     -name "falcon-case" \
     "${MACHINE[@]}" \
-    -enable-kvm -cpu "$STATE_CPU" -m "$MEM" -smp "$CPUS" \
+    "${ACCEL[@]}" -m "$MEM" -smp "$CPUS" \
     "${FIRMWARE[@]}" \
     "${DRIVES[@]}" \
     -netdev user,id=net0 \
-    -device e1000e,netdev=net0,romfile= \
+    -device "$NIC",netdev=net0,romfile= \
     -object filter-dump,id=dump0,netdev=net0,file="$PCAP" \
-    -display none -vga std \
+    -display none "${VGA[@]}" \
     -serial "file:$SERIAL" \
     -monitor "unix:$MON,server,nowait" \
     >"$OUTDIR/qemu.log" 2>&1 &
@@ -334,7 +358,7 @@ T1=$(date +%s)
 # Every 2 s for the first 30: Windows' cdboot.efi gives up on its prompt
 # after about five seconds. Every 10 s after that, for slower menus.
 NUDGE_EVERY=2
-NUDGE_FOR=90
+NUDGE_FOR=$(( 90 * SCALE ))
 next_nudge=$(( T1 + NUDGE_EVERY ))
 # Bytes read from the stick so far, from the monitor (0 when it cannot say).
 MEDIA_MIB=64
@@ -374,7 +398,7 @@ type_line() {   # type_line TEXT
 # The Setup probe (the "setup" signal above): looked for every SETUP_EVERY
 # seconds once the payload has the machine, run once.
 SETUP_EVERY=10
-next_setup=$(( T1 + 30 ))
+next_setup=$(( T1 + 30 * SCALE ))
 setup_probe=
 
 # FALCON_CASE_SHOTS=N keeps a screenshot every N seconds (shot-SECS.png), for
@@ -439,6 +463,15 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
             <<<"$after"; then
         finish PASS "the BSD installer is up on serial"
     fi
+    # PassMark MemTest86 and the EDK II shell say so on serial, and their
+    # screens are mostly black, which the memtest screen test below reads
+    # as a loader menu: MemTest86's own startup log, the shell's prompt.
+    if grep -q -E 'Retrieving hardware info|Initializing display' <<<"$after"; then
+        finish PASS "MemTest86 is running (its serial log)"
+    fi
+    if grep -q -E 'UEFI Interactive Shell|^ *Shell> ?$' <<<"$after"; then
+        finish PASS "the UEFI shell is up on serial"
+    fi
     if grep -q -E 'Kernel panic - not syncing' <<<"$after"; then
         finish FAIL "$(grep -m1 'Kernel panic' <<<"$after" | cut -c1-120)"
     fi
@@ -446,7 +479,7 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     # straight to a full-screen test and runs. So for memtest a graphical
     # screen, once the boot is well underway, is the boot succeeding; a memtest
     # that did not boot sits at the loader menu, which reads as a text console.
-    if [[ "$CASE" == memtest* ]] && (( now - T1 > 60 )) && (( now >= next_setup )); then
+    if [[ "$CASE" == memtest* ]] && (( now - T1 > 60 * SCALE )) && (( now >= next_setup )); then
         next_setup=$(( now + SETUP_EVERY ))
         MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh mt "$OUTDIR" \
             >/dev/null 2>&1 || true

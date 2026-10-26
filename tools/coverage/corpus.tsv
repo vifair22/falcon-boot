@@ -13,11 +13,12 @@
 #   source    an https URL, or local:<note> for media with no stable public
 #             URL (Windows, a superseded snapshot); those are copied in by hand
 #             or with --local DIR and still verified against sha256
-#   arch      optional: i686 for a 32-bit ISO, absent for x86_64. A 32-bit
-#             ISO runs in the BIOS columns only (the UEFI loader is x86-64
-#             and has no blessed route to offer it), and a 64-bit one is not
-#             run in bios32, the i686 column, where its kernel is
-#             refused by design
+#   arch      optional: i686 for a 32-bit ISO, aarch64 for an arm64 one,
+#             absent for x86_64. A 32-bit ISO runs in the BIOS columns only
+#             (the UEFI loader is x86-64 and has no blessed route to offer
+#             it), and a 64-bit one is not run in bios32, the i686 column,
+#             where its kernel is refused by design. An arm64 ISO runs in the
+#             a64 columns only, and nothing else does
 #
 # Rows are added as a family is worked on. A row is removed only when its URL
 # dies and a successor is pinned in its place.
@@ -106,3 +107,12 @@ windows-7-sp1-x86	C	windows	bd4c03c917d00a40222d92a6fab04981a7bd46140bda1888eb96
 windows-7-x64	C	windows	63c02e9f0b91061203ca67d71456ea0f8a8c5c90134439c707de32090251391e	windows-7-x64.iso	local:Windows 7 RTM Ultimate x64 (GRMCULXFRER_EN_DVD), supplied by the user
 windows-8.1-x86	C	windows	a569191631a41a260cd180b0d6b926cd2064235f0ac0e3e4ccc387f440e0827a	windows-8.1-x86.iso	local:Windows 8.1 with Update x86 (IR5_CCSA_X86FRE_EN-US_DV9), supplied by the user	i686
 windows-8.1-x64	C	windows	d8333cf427eb3318ff6ab755eb1dd9d433f0e2ae43745312c1cd23e83ca1ce51	windows-8.1-x64.iso	local:Windows 8.1 with Update x64 (IR5_CCSA_X64FRE_EN-US_DV9), supplied by the user
+debian-netinst-13.7-arm64	A	debian-installer	6e93fa1759bd9d4b0fc11e938987de6967ee7de5297dac1be27c3a75cc17024b	debian-13.7.0-arm64-netinst.iso	https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/debian-13.7.0-arm64-netinst.iso	aarch64
+fedora-ws-44-arm64	A	fedora-live	162ba3c552a2d241c7c63ec26777af0255ee1b5a135adc0be986ceed999933ef	Fedora-Workstation-Live-44-1.7.aarch64.iso	https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-Live-44-1.7.aarch64.iso	aarch64
+ubuntu-26.04.1-arm64	A	casper	c54d196489d3c867975fb3bbb72ca52ec2e137456e305481f81096304e4d2517	ubuntu-26.04.1-desktop-arm64.iso	https://cdimage.ubuntu.com/releases/26.04/release/ubuntu-26.04.1-desktop-arm64.iso	aarch64
+opensuse-tw-20261020-arm64	A	suse-live	990fbe9742320cc8e3aed9fd228c59ce611d7da0ebdf7c1809abd93059c95e8e	openSUSE-Tumbleweed-GNOME-Live-aarch64-Snapshot20261020-Media.iso	https://download.opensuse.org/ports/aarch64/tumbleweed/iso/openSUSE-Tumbleweed-GNOME-Live-aarch64-Snapshot20261020-Media.iso	aarch64
+alpine-std-3.24.3-arm64	B	alpine	d4438d8973b7a4c50a2ee25d1555c537c1e6e91e25db28b7b683aa79c9ddba8f	alpine-standard-3.24.3-aarch64.iso	https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-standard-3.24.3-aarch64.iso	aarch64
+freebsd-bootonly-15.1-arm64	C	freebsd	359136c2af73e03da6f15ad59f0c67bc561ca8b69631d78bfb8f2225e2c9a5ef	FreeBSD-15.1-RELEASE-arm64-aarch64-bootonly.iso	https://download.freebsd.org/releases/arm64/aarch64/ISO-IMAGES/15.1/FreeBSD-15.1-RELEASE-arm64-aarch64-bootonly.iso	aarch64
+windows-11-arm64	A	windows	8992f2d2cfd2fa647e579e9eb31fc21f34da8333c29b6170fde17d2ed6623e9c	windows-11-arm64-26300.iso	local:Windows11_Client_arm64_en-us_26300_9457.iso, Windows 11 ARM64 build 26300, from Microsoft's download page (no stable URL)	aarch64
+memtest86-11-arm64	B	memtest	1ce1c2069c59149f114e8cb83948c7da360027555ae859d5bcb6abd094593808	memtest86-usb.img	local:memtest86-usb.img from https://www.memtest86.com/downloads/memtest86-usb.zip (zip sha256 1c01e03adac5c9e4d5d4e863de16771161b00e06032b7e91b1aeeba86c35a4de; PassMark MemTest86 11, BOOTAA64.efi beside x64 and ia32)	aarch64
+efi-shell-aa64-2025.02	C	efi-shell	80925ed6b31025431ef315722d881c83f39b48bdf8f748947bc43df7ae9ae1c5	efi-shell-aa64-2025.02.iso	local:built by tools/coverage/mk-shell-iso.sh in the harness from Debian's efi-shell-aa64 2025.02-8+deb13u1	aarch64

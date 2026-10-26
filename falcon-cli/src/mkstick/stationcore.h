@@ -284,11 +284,46 @@ int stn_run_whole_lba0(const stn_run *r, int full);
 
 /* ---- the ESP's names (DESIGN Section 12.2) ---- */
 
+/* The ESP's names carry the station's architecture, x64 or aa64 (the
+ * removable-media path's BOOTX64.EFI or BOOTAA64.EFI, shim's shimx64.efi or
+ * shimaa64.efi). The architecture is the machine's the station boots, which
+ * is the host's unless a command's --arch names another (an image built here
+ * for an AArch64 machine): stn_arch_set, before the first name is asked
+ * for. */
+typedef struct {
+    char low[8];               /* "x64", "aa64" */
+    char shim[24];             /* shimx64.efi */
+    char jump[24];             /* BOOTX64.EFI */
+    char jump_path[40];        /* \EFI\BOOT\BOOTX64.EFI */
+    char jump_backup_ext[24];  /* .BOOTX64.EFI */
+    char loader_noshim[24];    /* falconx64.efi */
+    char loader_old[24];       /* grubx64.efi */
+    char loader_file[48];      /* falcon-boot-station.efi, -aa64.efi */
+    char jump_file[48];        /* falcon-esp-jump.efi, -aa64.efi */
+    char jump_rel[40];         /* EFI/BOOT/BOOTX64.EFI, as mtools takes it */
+    char jump_abs[40];         /* /EFI/BOOT/BOOTX64.EFI, as fs/ takes it */
+    char shim_abs[40];         /* /EFI/falcon/shimx64.efi */
+} stn_names;
+
+/* The ESP's two directories: the station's own, and the removable-media
+ * one the jumper sits in. */
+#define STN_ESP_DIR       "EFI/falcon"
+#define STN_ESP_BOOT_DIR  "EFI/BOOT"
+
+/* Sets the station's architecture, "x64" or "aa64"; -1 for anything else. */
+int stn_arch_set(const char *arch);
+
+/* The host's architecture, "x64" or "aa64", NULL for another. */
+const char *stn_arch_host(void);
+
+/* The names for the architecture set, or the host's when none was. */
+const stn_names *stn_n(void);
+
 /* The loader's name in \EFI\falcon with no shim in front of it. */
-#define STN_LOADER_NOSHIM "falconx64.efi"
+#define STN_LOADER_NOSHIM (stn_n()->loader_noshim)
 /* The name an install from before the jumper gave it: status and totp
  * still find it, and update renames it (DESIGN Section 12.14). */
-#define STN_LOADER_OLD    "grubx64.efi"
+#define STN_LOADER_OLD    (stn_n()->loader_old)
 
 /* The no-shim loader's name on an ESP that holds `has_new` (falconx64.efi)
  * and `has_old` (grubx64.efi): the old name only when it alone is there. */

@@ -4,6 +4,8 @@
 
 #include <crypto/xstate.h>
 
+#if defined(__x86_64__) || defined(__i386__)
+
 #include <cpuid.h>
 
 #define CR4_OSXSAVE   ((uintptr_t)1 << 18)
@@ -95,3 +97,21 @@ void xstate_return(const xstate_saved *s)
         cr4_write(s->cr4);
     }
 }
+
+#else
+
+/* AArch64 UEFI runs with FP and SIMD on, and nothing here turns on a state
+ * the firmware left off: no borrow, nothing to give back. */
+void xstate_borrow(xstate_saved *s)
+{
+    s->cr4 = 0;
+    s->xcr0 = 0;
+    s->changed = 0;
+}
+
+void xstate_return(const xstate_saved *s)
+{
+    (void)s;
+}
+
+#endif

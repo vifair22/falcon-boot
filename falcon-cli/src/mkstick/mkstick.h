@@ -54,6 +54,7 @@ cli_status mkstick_guid_selfcheck(void);
 /* ---- on-stick paths (DESIGN Sections 4, 7.5 and 8.1) ---- */
 #define MKS_ESP_BOOT_DIR   "EFI/BOOT"
 #define MKS_ESP_SHIM_NAME  "BOOTX64.EFI"   /* removable-media default path */
+#define MKS_ESP_SHIM_NAME_AA64 "BOOTAA64.EFI" /* the same on AArch64 */
 #define MKS_ESP_CERT_NAME  "falcon-boot.cer"
 #define MKS_P3_UKI_DIR     "uki"
 #define MKS_P3_KEY_NAME    "falcon-mok.key"   /* mode 0600, LUKS-encrypted */
@@ -101,6 +102,8 @@ cli_status mkstick_guid_selfcheck(void);
 #define MKS_MIN_P1 ((uint64_t)16 * 1024 * 1024)
 #define MKS_MIN_P2 ((uint64_t) 8 * 1024 * 1024)
 #define MKS_MIN_P3 ((uint64_t)48 * 1024 * 1024)
+/* --p3-fs xfs: mkfs.xfs makes nothing under 300 MB, inside LUKS2. */
+#define MKS_MIN_P3_XFS ((uint64_t)320 * 1024 * 1024)
 #define MKS_MIN_P4 ((uint64_t)24 * 1024 * 1024)
 
 /* Alignment for every partition start and the slack left at both ends for the

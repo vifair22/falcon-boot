@@ -426,6 +426,7 @@ static int pick_level(inst *in, int simd)
         return CRYPTO_ERR_UNSUPPORTED;
     }
     switch (simd) {
+#if defined(__x86_64__) || defined(__i386__)
     case CRYPTO_SIMD_SSE2:
         in->fill = argon2_fill_sse2;
         in->wipe = argon2_wipe_sse2;
@@ -438,6 +439,7 @@ static int pick_level(inst *in, int simd)
         in->fill = argon2_fill_avx2;
         in->wipe = argon2_wipe_avx2;
         break;
+#endif
     default:
         in->fill = NULL;
         in->wipe = NULL;

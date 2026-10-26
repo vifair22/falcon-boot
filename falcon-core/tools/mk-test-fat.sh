@@ -14,6 +14,12 @@
 #   build/test-fat12.img   1.4 MiB, 512-byte sectors, 1 sector per cluster
 #   build/test-fat16.img   64 MiB,  4 sectors per cluster
 #   build/test-fat32.img   64 MiB,  1 sector per cluster
+#   build/test-fat32-library.img
+#                          40 MiB FAT32: an ISO library as `mkstick create
+#                          --p2-fs fat32` makes one, /.falcon (role library,
+#                          install 5a112233445566778899aabbccddee0f) and
+#                          lib.iso, for the extent map's readers
+#                          (extfind_test.c, winjumpcore_test.c)
 #
 # The tree is the same on each so one set of assertions covers all three, and
 # it is chosen to exercise what the driver actually has to decide:
@@ -129,4 +135,13 @@ build_one "$OUT/test-fat16.img" 16 65536 4
 # FAT32: 65525 or more. 64 MiB at one sector per cluster is about 130000.
 build_one "$OUT/test-fat32.img" 32 65536 1
 
-echo "test-fat: 3 images in $OUT"
+lib=$OUT/test-fat32-library.img
+rm -f "$lib"
+truncate -s 40M "$lib"
+mkfs.vfat -F 32 -s 1 -n FALCON-ISO "$lib" >/dev/null
+printf 'falcon 1 library 5a112233445566778899aabbccddee0f\n' > "$W/falcon-rec"
+MTOOLS_SKIP_CHECK=1 mcopy -i "$lib" "$W/falcon-rec" ::/.falcon
+MTOOLS_SKIP_CHECK=1 mcopy -i "$lib" "$W/big.bin" ::/lib.iso
+echo "   $lib  FAT32 ISO library"
+
+echo "test-fat: 4 images in $OUT"

@@ -146,7 +146,8 @@ static void console_add(const char *path)
  * records).
  *
  * The candidates are /dev/console (whatever the cmdline made it), the screen,
- * and the serial port the cmdline names for the rig. A candidate that cannot
+ * and the serial port the cmdline names for the rig: ttyS1 on x86-64, and on
+ * AArch64 ttyAMA0, virt's one PL011. A candidate that cannot
  * be opened is simply not in the set. Descriptors 0/1/2 stay on /dev/console
  * because that is what the children inherit; their own output is not routed
  * through this program. */
@@ -160,6 +161,7 @@ void console_open(void)
     console_add("/dev/console");
     console_add("/dev/tty0");
     console_add("/dev/ttyS1");
+    console_add("/dev/ttyAMA0");
 
     fd = open("/dev/console", O_RDWR | O_NOCTTY);
     if (fd < 0)

@@ -43,6 +43,15 @@
 #        mode, no SSE2, no AES-NI. The floor falcon-bios runs on, and the
 #        column the 32-bit ISOs are judged in. A 64-bit ISO there fails
 #        by design, with the loader saying why.
+#
+#   a64-off, a64-ms, a64-own
+#        off, ms and own on an AArch64 machine: QEMU's virt under AAVMF,
+#        emulated (TCG), the stick on xhci as USB storage (WinPE has no
+#        virtio driver; a stick is USB anyway). a64-ms enrolls Microsoft's
+#        2023 UEFI CA, the one shimaa64 is signed by
+#        (falcon-efi/tools/mk-test-mok.sh); a64-own trusts the rig's db key
+#        and a shimaa64 that carries its signature too. The arm64 ISOs run
+#        in these columns only.
 
 . falcon-efi/tools/ovmf.sh
 
@@ -56,6 +65,10 @@ MOKSB_VARS=build/mok-test/OVMF_VARS.secboot.moksb.fd
 MOK_CRT_STATES=build/mok-test/falcon-test-mok.crt
 SHIM_SRC=build/shim/bins/fedora-16.1-shimx64.efi
 SHIM_DUAL=$STATES_DIR/shimx64-dual.efi
+A64_MS_VARS=build/mok-test/AAVMF_VARS.secboot.mok.fd
+A64_OWN_VARS=$OWN_DIR/AAVMF_VARS.own.fd
+SHIM_SRC_AA64=build/shim/bins/fedora-16.1-shimaa64.efi
+SHIM_DUAL_AA64=$STATES_DIR/shimaa64-dual.efi
 MOK_OWNER_GUID=605dab50-e046-4300-abb6-3dd810dd8b23
 OWN_OWNER_GUID=4f5d5a1e-7b1c-4c35-9a6e-6f616c636f6e
 
@@ -140,24 +153,76 @@ states_prepare() {
             return 1
         fi
     fi
-    if [[ ! -f "$SHIM_DUAL" || "$SHIM_SRC" -nt "$SHIM_DUAL" ||
-          "$OWN_CRT" -nt "$SHIM_DUAL" ]]; then
+    states_dual "$SHIM_SRC" "$SHIM_DUAL"
+    if [[ -f "$SHIM_SRC_AA64" ]]; then
+        states_dual "$SHIM_SRC_AA64" "$SHIM_DUAL_AA64"
+        states_own_vars "$(aavmf_find VARS plain)" "$A64_OWN_VARS"
+    fi
+}
+
+# The shim SRC with the rig's db signature added beside Microsoft's, as OUT.
+states_dual() {   # states_dual SRC OUT
+    if [[ ! -f "$2" || "$1" -nt "$2" || "$OWN_CRT" -nt "$2" ]]; then
         local tmp=$STATES_DIR/shim-own-only.efi
-        sbsign --key "$OWN_KEY" --cert "$OWN_CRT" --output "$tmp" "$SHIM_SRC" \
+        sbsign --key "$OWN_KEY" --cert "$OWN_CRT" --output "$tmp" "$1" \
             >/dev/null 2>&1
-        pe_merge_sigs "$SHIM_SRC" "$tmp" "$SHIM_DUAL"
+        pe_merge_sigs "$1" "$tmp" "$2"
         rm -f "$tmp"
+    fi
+}
+
+# The own-keys varstore for AArch64, from AAVMF's blank one; the same
+# enrollment and the same check as OVMF's above.
+states_own_vars() {   # states_own_vars BLANK OUT
+    [[ -f "$2" && ! "$OWN_CRT" -nt "$2" ]] && return 0
+    cp -f "$1" "$2"
+    chmod u+w "$2"
+    if ! virt-fw-vars --inplace "$2" --no-microsoft \
+        --set-pk "$OWN_OWNER_GUID" "$OWN_CRT" \
+        --add-kek "$OWN_OWNER_GUID" "$OWN_CRT" \
+        --add-db "$OWN_OWNER_GUID" "$OWN_CRT" \
+        --add-mok "$MOK_OWNER_GUID" "$MOK_CRT_STATES" \
+        --secure-boot >/dev/null ||
+       ! ovmf_vars_have_pk virt-fw-vars "$2"; then
+        echo "ERROR: virt-fw-vars could not build $2" >&2
+        rm -f "$2"
+        return 1
     fi
 }
 
 # Sets STATE_CODE and STATE_SECURE (1 when the firmware needs SMM and a
 # secure flash), STATE_BIOS (1 for the SeaBIOS columns, which have neither),
-# STATE_CPU (the QEMU CPU model), and copies the state's varstore to DEST,
-# which the run may then write to freely.
+# STATE_CPU (the QEMU CPU model), STATE_ARCH (x64 or aa64), and copies the
+# state's varstore to DEST, which the run may then write to freely.
 state_firmware() {   # state_firmware STATE DEST
     STATE_BIOS=0
     STATE_CPU=host
+    STATE_ARCH=x64
     case "$1" in
+    a64-off|a64-ms|a64-own)
+        # AAVMF's Secure Boot needs no SMM: its store is not behind one.
+        STATE_ARCH=aa64
+        STATE_CPU=max
+        STATE_SECURE=0
+        case "$1" in
+        a64-off)
+            STATE_CODE=$(aavmf_find CODE plain)
+            cp -f "$(aavmf_find VARS plain)" "$2"
+            ;;
+        a64-ms)
+            STATE_CODE=$(aavmf_find CODE secboot || aavmf_find CODE plain)
+            [[ -f "$A64_MS_VARS" ]] || {
+                echo "ERROR: $A64_MS_VARS missing (run falcon-efi/tools/mk-test-mok.sh)" >&2
+                return 1; }
+            cp -f "$A64_MS_VARS" "$2"
+            ;;
+        a64-own)
+            STATE_CODE=$(aavmf_find CODE secboot || aavmf_find CODE plain)
+            states_prepare
+            cp -f "$A64_OWN_VARS" "$2"
+            ;;
+        esac
+        ;;
     bios|bios32)
         STATE_CODE=
         STATE_SECURE=0
@@ -193,7 +258,8 @@ state_firmware() {   # state_firmware STATE DEST
         cp -f "$MOKSB_VARS" "$2"
         ;;
     *)
-        echo "ERROR: unknown state $1 (off, ms, own, moksb, bios, bios32)" >&2
+        echo "ERROR: unknown state $1 (off, ms, own, moksb, bios, bios32," \
+             "a64-off, a64-ms, a64-own)" >&2
         return 1
         ;;
     esac

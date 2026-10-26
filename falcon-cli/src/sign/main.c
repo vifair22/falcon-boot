@@ -29,6 +29,7 @@
 #include <sign/manifestio.h>
 #include <sign/payload.h>
 #include <sign/uki.h>
+#include <pe/pe.h>
 
 #include <manifest/manifest.h>
 #include <media/hookcmd.h>
@@ -40,8 +41,6 @@
 #include <unistd.h>
 
 #define CMDLINE_MAX 4096u
-
-#define DEFAULT_STUB UKI_DEFAULT_STUB
 
 #define BLESSED_DIR SGN_BLESSED_DIR
 
@@ -136,7 +135,9 @@ static void usage(FILE *f)
 "                        table; required alongside --cmdline for a family the\n"
 "                        table does not cover. A trailing * matches a suffix.\n"
 "  --cmdline-extra <s>   added to the rendered cmdline, before a \"--\"\n"
-"  --stub <file>         sd-stub to wrap with (default: " DEFAULT_STUB ")\n"
+"  --stub <file>         sd-stub to wrap with (default: the kernel's\n"
+"                        machine's, " UKI_STUB_X64 "\n"
+"                        or " UKI_STUB_AA64 ")\n"
 "  --no-initrd           thin wrap: kernel and cmdline only. The default\n"
 "                        embeds the ISO's initramfs so the entire blessed\n"
 "                        boot chain is signed (DESIGN Section 8.1); the\n"
@@ -174,7 +175,7 @@ static int parse_args(int argc, char **argv, options *o)
      * chain signed, --no-initrd as the space-over-coverage escape. */
     o->embed_initrd = 1;
     o->hook = 1;
-    o->stub = DEFAULT_STUB;
+    o->stub = NULL;
 
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -471,16 +472,28 @@ static int bless_payload(const options *o)
     return sgn_payload_bless(&p);
 }
 
-/* The hook, as make embeds it (falcon-hook/build.mk). */
+/* The hook, as make embeds it (falcon-hook/build.mk), for each kernel
+ * machine a wrap may hold. */
 extern const unsigned char falcon_hook_bin[];
 extern const size_t falcon_hook_bin_len;
+extern const unsigned char falcon_hook_a64_bin[];
+extern const size_t falcon_hook_a64_bin_len;
 
-/* Pads the staged initrd to 4 bytes and appends the hook's archive. */
-static int append_hook(const char *initrd)
+/* Pads the staged initrd to 4 bytes and appends the hook's archive, the
+ * build for the kernel's machine. */
+static int append_hook(const char *initrd, uint16_t machine)
 {
-    size_t cap = hookcmd_archive_size(falcon_hook_bin_len, 0), len = 0;
+    const unsigned char *hook = falcon_hook_bin;
+    size_t hook_len = falcon_hook_bin_len;
+    size_t cap, len = 0;
     uint8_t *buf;
     int rc;
+
+    if (machine == PE_MACHINE_ARM64) {
+        hook = falcon_hook_a64_bin;
+        hook_len = falcon_hook_a64_bin_len;
+    }
+    cap = hookcmd_archive_size(hook_len, 0);
 
     buf = cap != 0 ? malloc(cap) : NULL;
     if (buf == NULL) {
@@ -489,8 +502,8 @@ static int append_hook(const char *initrd)
     }
     /* No map: a wrap is built before the ISO's extents are known, and the
      * loader publishes them in FalconIsoMap at boot. */
-    if (hookcmd_archive(falcon_hook_bin, falcon_hook_bin_len, NULL, 0, buf, cap,
-                        &len) != HOOKCMD_OK) {
+    if (hookcmd_archive(hook, hook_len, NULL, 0, buf, cap, &len) !=
+        HOOKCMD_OK) {
         free(buf);
         sgn_set_error(SGN_ERR_FORMAT, "the hook's archive could not be built");
         return SGN_ERR_FORMAT;
@@ -718,8 +731,10 @@ static int bless(const options *o)
     }
 
     /* Checked here rather than with sbsign above because only a wrap needs
-     * it, and the family is what says whether this is one. */
-    if (!sgn_file_exists(o->stub)) {
+     * it, and the family is what says whether this is one. The default,
+     * which depends on the kernel's machine, is checked once the kernel is
+     * out of the ISO. */
+    if (o->stub != NULL && !sgn_file_exists(o->stub)) {
         sgn_set_error(SGN_ERR_IO,
                       "sd-stub not found at '%s'; install systemd-boot or "
                       "pass --stub", o->stub);
@@ -968,6 +983,25 @@ static int bless(const options *o)
     rc = iso_view_extract(view, kernel_member, work_kernel);
     if (rc != SGN_OK)
         goto cleanup;
+    /* Debian's and Ubuntu's arm64 vmlinuz is a gzipped Image, which sd-stub
+     * cannot start wrapped; the Image inside carries the EFI stub. */
+    rc = uki_kernel_unpack(work_kernel);
+    if (rc != SGN_OK)
+        goto cleanup;
+    if (o->stub == NULL) {
+        uint16_t machine = uki_kernel_machine(work_kernel);
+        const char *stub = uki_default_stub(machine);
+
+        if (stub == NULL || !sgn_file_exists(stub)) {
+            sgn_set_error(SGN_ERR_IO, "no sd-stub for this kernel's machine "
+                          "(0x%04x)%s%s; install systemd-boot's or pass "
+                          "--stub", (unsigned)machine,
+                          stub != NULL ? " at " : "",
+                          stub != NULL ? stub : "");
+            rc = SGN_ERR_IO;
+            goto cleanup;
+        }
+    }
 
     if (o->embed_initrd && entry != NULL && o->kernel == NULL &&
         (entry->n_initrd > 0 || hooked)) {
@@ -1015,7 +1049,7 @@ static int bless(const options *o)
                 goto cleanup;
         }
         if (hooked) {
-            rc = append_hook(work_initrd);
+            rc = append_hook(work_initrd, uki_kernel_machine(work_kernel));
             if (rc != SGN_OK)
                 goto cleanup;
         }

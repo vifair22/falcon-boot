@@ -43,28 +43,52 @@ EFI_APP_SRCS :=
 
 # $(call efi_app,<app>,<image name>,<sources>)
 #
-# One UEFI image: the link, the check that its .sbat section survived, and a
-# copy signed with the rig's test MOK. Without .sbat shim refuses the image
-# under Secure Boot with the same opaque EFI_SECURITY_VIOLATION a bad
-# signature gives, and the mistake is invisible until someone turns Secure
-# Boot on (apps/stick/efi_sbat.c has the details). sbsign warns "data
-# remaining: gaps between PE/COFF sections?" about our mingw output; it says
-# the same about Fedora's own gnu-efi binaries and both verify under shim
-# (DESIGN Section 7.6).
+# One UEFI image per architecture: <image name>.efi for x64 and
+# <image name>-aa64.efi for AArch64, each with the check that its .sbat
+# section survived the link, and a copy signed with the rig's test MOK.
+# Without .sbat shim refuses the image under Secure Boot with the same opaque
+# EFI_SECURITY_VIOLATION a bad signature gives, and the mistake is invisible
+# until someone turns Secure Boot on (apps/stick/efi_sbat.c has the details).
+# sbsign warns "data remaining: gaps between PE/COFF sections?" about our
+# mingw output; it says the same about Fedora's own gnu-efi binaries and
+# both verify under shim (DESIGN Section 7.6).
 define efi_app
-$(1)_EFI_OBJS := $$(patsubst %.c,$$(EFI_OBJ)/%.o,$(3))
 EFI_APP_SRCS += $(3)
+$(call efi_link,$(1),$(2),$(3),EFI_OBJ,CC,EFI_LDFLAGS,$$(CC:gcc=objdump))
+$(call efi_link,$(1)-aa64,$(2)-aa64,$$(patsubst $$(WINJUMP_BLOB),$$(WINJUMP_A64_BLOB),$$(patsubst $$(HOOK_BLOB),$$(HOOK_A64_BLOB),$$(filter-out $$(EFI_X86_ONLY),$(3)))),EFI_AA64_OBJ,CC_AA64,EFI_AA64_LDFLAGS,$$(OBJDUMP_AA64))
+endef
+
+# Shim's loader refuses a section that has no bytes in the file and is not
+# marked uninitialised data ("inside image headers", EFI_UNSUPPORTED). lld
+# folds .bss into .data, so an AArch64 image whose data is all zero has one;
+# every AArch64 link is checked. $(1) the image.
+define pe_raw_check
+	@llvm-readobj --sections $(1) | awk ' \
+		$$1 == "Name:" { n = $$2; r = -1 } \
+		$$1 == "RawDataSize:" { r = $$2 } \
+		/IMAGE_SCN_CNT_UNINITIALIZED_DATA/ { r = 1 } \
+		$$1 == "]" && r == 0 { print n; bad = 1 } \
+		END { exit bad }' >&2 || { \
+		echo "ERROR: $(1): the sections above have no file data and are not .bss; shim refuses the image" >&2; \
+		rm -f $(1); exit 1; }
+endef
+
+# $(call efi_link,<app>,<image name>,<sources>,<objdir var>,<cc var>,
+#                 <ldflags var>,<objdump>)
+define efi_link
+$(1)_EFI_OBJS := $$(patsubst %.c,$$($(4))/%.o,$(3))
 
 $$(BIN)/$(2).efi: $$($(1)_EFI_OBJS)
 	@mkdir -p $$(@D)
-	$$(CC) $$(EFI_LDFLAGS) -o $$@ $$($(1)_EFI_OBJS)
+	$$($(5)) $$($(6)) -o $$@ $$($(1)_EFI_OBJS)
+	$(if $(filter CC_AA64,$(5)),$$(call pe_raw_check,$$@))
 
 sbat-check-$(1): $$(BIN)/$(2).efi
-	@$$(CC:gcc=objdump) -h $$< | grep -q '\.sbat' || { \
+	@$(7) -h $$< | grep -q '\.sbat' || { \
 		echo "ERROR: $$< has no .sbat section; shim will refuse it" >&2; \
 		exit 1; }
 	@echo ".sbat section present:"
-	@$$(CC:gcc=objdump) -s -j .sbat $$< | sed -n '3,$$$$p'
+	@$(7) -s -j .sbat $$< | sed -n '3,$$$$p'
 
 $$(BIN)/$(2)-signed.efi: $$(BIN)/$(2).efi $$(MOK_KEY)
 	@$$(MAKE) --no-print-directory sbat-check-$(1)
@@ -73,6 +97,11 @@ $$(BIN)/$(2)-signed.efi: $$(BIN)/$(2).efi $$(MOK_KEY)
 
 .PHONY: sbat-check-$(1)
 endef
+
+# Every AArch64 image (DESIGN Section 3); `make aa64`.
+aa64: $(EFI_AA64) $(EFI_STATION_AA64) $(EFI_ESP_JUMP_AA64)
+
+.PHONY: aa64
 
 # ---- the rig (docs/DESIGN.md Section 10) ----
 
@@ -93,6 +122,7 @@ MOK_CRT := $(MOK_DIR)/falcon-test-mok.crt
 
 # The fixture UKI staged on p3 (falcon-efi/tools/mk-test-uki.sh).
 FIXTURE_UKI := build/test/fixture-uki.efi
+FIXTURE_UKI_AA64 := build/test/fixture-uki-aa64.efi
 
 # Test payload: a throwaway EFI application that goes inside the El Torito
 # ISO the rig boots (falcon-efi/tools/mk-test-iso.sh). It is not part of the
@@ -100,11 +130,18 @@ FIXTURE_UKI := build/test/fixture-uki.efi
 PAYLOAD_SRC := falcon-efi/tools/payload/payload.c
 PAYLOAD := build/test/payload.efi
 
-payload: $(PAYLOAD)
+PAYLOAD_AA64 := build/test/payload-aa64.efi
+
+payload: $(PAYLOAD) $(PAYLOAD_AA64)
 
 $(PAYLOAD): $(EFI_OBJ)/$(PAYLOAD_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
+
+# The same for the test ISO's BOOTAA64.EFI.
+$(PAYLOAD_AA64): $(EFI_AA64_OBJ)/$(PAYLOAD_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
 
 # The station rig's stand-in for bootmgfw.efi and memtest.efi: it prints
 # the path it was started as. Signed with the test MOK for Secure Boot on.
@@ -116,7 +153,20 @@ $(STANDIN): $(EFI_OBJ)/$(STANDIN_SRC:.c=.o)
 	@mkdir -p $(@D)
 	$(CC) $(EFI_LDFLAGS) -o $@ $<
 
+# The same for an AArch64 station.
+STANDIN_AA64 := build/test/standin-aa64.efi
+
+$(STANDIN_AA64): $(EFI_AA64_OBJ)/$(STANDIN_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
+	$(call pe_raw_check,$@)
+
 $(STANDIN_SIGNED): $(STANDIN) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
+STANDIN_AA64_SIGNED := build/test/standin-aa64-signed.efi
+
+$(STANDIN_AA64_SIGNED): $(STANDIN_AA64) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
 # The core rig's relaunch-uefi payload: started from a falcon-boot, it
@@ -142,6 +192,21 @@ $(TPM_PROBE): $(EFI_OBJ)/$(TPM_PROBE_SRC:.c=.o)
 $(TPM_PROBE_SIGNED): $(TPM_PROBE) $(MOK_KEY)
 	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
 
+TPM_PROBE_AA64 := build/test/tpm-probe-aa64.efi
+TPM_PROBE_AA64_SIGNED := build/test/tpm-probe-aa64-signed.efi
+
+$(TPM_PROBE_AA64): $(EFI_AA64_OBJ)/$(TPM_PROBE_SRC:.c=.o)
+	@mkdir -p $(@D)
+	$(CC_AA64) $(EFI_AA64_LDFLAGS) -o $@ $<
+	$(call pe_raw_check,$@)
+
+# The probe's data is all zero buffers: kept as file bytes, so its .data is
+# not the empty section pe_raw_check refuses.
+$(EFI_AA64_OBJ)/$(TPM_PROBE_SRC:.c=.o): EFI_AA64_CFLAGS += -fno-zero-initialized-in-bss
+
+$(TPM_PROBE_AA64_SIGNED): $(TPM_PROBE_AA64) $(MOK_KEY)
+	sbsign --key $(MOK_KEY) --cert $(MOK_CRT) --output $@ $<
+
 # Stage the loader as the removable-media default path on a vvfat-backed ESP,
 # alongside a writable per-checkout copy of the OVMF varstore.
 esp: $(EFI)
@@ -153,19 +218,21 @@ run: $(EFI)
 	falcon-efi/tools/run-qemu.sh
 
 # Throwaway test MOK and a matching OVMF varstore. Test-rig scaffolding only.
-mok-test: $(MOK_KEY)
+mok-test: $(MOK_KEY) $(MOK_DIR)/AAVMF_VARS.secboot.mok.fd
 
-$(MOK_KEY):
+# The AArch64 varstores come from the same run; a build directory made
+# before they existed gets them by running it again (it keeps the key).
+$(MOK_KEY) $(MOK_DIR)/AAVMF_VARS.secboot.mok.fd:
 	falcon-efi/tools/mk-test-mok.sh
 
 # The stick loader signed with the test MOK, so shim accepts it as a second
-# stage (the rule is efi_app's).
-sign: $(EFI_SIGNED)
+# stage, for both machines (the rule is efi_app's).
+sign: $(EFI_SIGNED) $(EFI_AA64_SIGNED)
 
 run-secboot: $(EFI_SIGNED)
 	falcon-efi/tools/run-qemu.sh --secboot
 
-test-iso: $(PAYLOAD)
+test-iso: $(PAYLOAD) $(PAYLOAD_AA64)
 	falcon-efi/tools/mk-test-iso.sh
 
 test-img: $(PAYLOAD)
@@ -175,18 +242,24 @@ test-img: $(PAYLOAD)
 # and Section 10). It needs the test MOK, because the Secure Boot half
 # of that test boots the SIGNED copy. The kernel comes out of an Arch ISO the
 # script reads and never writes; ARCH_ISO overrides where it looks.
-test-uki: $(FIXTURE_UKI)
+test-uki: $(FIXTURE_UKI) $(FIXTURE_UKI_AA64)
 
 $(FIXTURE_UKI): falcon-efi/tools/mk-test-uki.sh \
 		falcon-efi/tools/uki-init/init.c $(MOK_KEY)
 	falcon-efi/tools/mk-test-uki.sh
+
+# The AArch64 one: Fedora's arm64 kernel (tools/fetch-fedora-kernel.sh).
+$(FIXTURE_UKI_AA64): falcon-efi/tools/mk-test-uki.sh \
+		falcon-efi/tools/uki-init/init.c tools/fetch-fedora-kernel.sh \
+		$(MOK_KEY)
+	UKI_ARCH=aa64 falcon-efi/tools/mk-test-uki.sh
 
 # The four-partition stick the personal-OS path needs (DESIGN Section 3). It
 # wants the signed loader for p1's shim chain and the payload for p3's /uki,
 # so both are prerequisites; the script degrades to an unsigned stick on its
 # own if the test MOK is absent. mkstick writes the boot record and puts the
 # BIOS stages on, so the stick boots under SeaBIOS too (Section 3.3).
-test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
+test-stick: $(EFI_SIGNED) $(EFI_AA64_SIGNED) test-iso test-uki cli bios
 	falcon-efi/tools/mk-test-stick.sh
 
 # The rig's station disk: a machine's disk with the station put on it by
@@ -194,6 +267,11 @@ test-stick: $(EFI_SIGNED) test-iso test-uki cli bios
 # both firmwares.
 test-station: $(STANDIN) station test-uki cli
 	falcon-efi/tools/mk-test-station.sh
+
+# The same disk with an AArch64 station on it, UEFI only.
+test-station-aa64: $(STANDIN_AA64) $(EFI_STATION_AA64) $(EFI_ESP_JUMP_AA64) \
+		test-uki cli
+	STATION_ARCH=aa64 falcon-efi/tools/mk-test-station.sh
 
 # The core step's matrix cells (DESIGN Section 10), each
 # booted headless and judged from serial: the stick alone, beside a second
@@ -236,6 +314,26 @@ test-tpm-rig:
 # disk under SeaBIOS. Builds its own disks (sudo, loop devices).
 test-station-installed: station cli $(STANDIN) $(STANDIN_SIGNED)
 	falcon-efi/tools/run-installed-rig.sh
+
+# The AArch64 stations, emulated (TCG, so slow): the station rig's cases on
+# the aa64 station disk, the installed stations, and the TPM cases virt has
+# a device for. The stick's AArch64 cases are test-core's.
+AA64_STATION_CASES := $(addprefix aa64-uefi-,menu countdown next-boot) \
+	$(addprefix aa64-uefi-sb-,menu nxt method-efi esp-found next-uki \
+	next-unknown ini-error no-default unsigned key-stops bad-pass timing)
+AA64_INSTALLED_CASES := aa64-uefi-sb-default aa64-uefi-sb-pos \
+	aa64-noshim-uefi aa64-noshim-uefi-sb aa64-noshim-jump-uefi-sb
+AA64_TPM_CASES := aa64-uefi-tpm2-probe aa64-uefi-sb-tpm2-probe \
+	aa64-uefi-tpm2-station aa64-uefi-sb-tpm2-totp aa64-uefi-sb-tpm2-totp-jump
+
+test-aa64: aa64 cli $(STANDIN_AA64) $(EFI_STATION_AA64) $(EFI_ESP_JUMP_AA64)
+	@test -f build/test-station-aa64.img || \
+		$(MAKE) --no-print-directory test-station-aa64
+	falcon-efi/tools/run-station-rig.sh $(AA64_STATION_CASES)
+	falcon-efi/tools/run-installed-rig.sh $(AA64_INSTALLED_CASES)
+	falcon-efi/tools/run-tpm-rig.sh $(AA64_TPM_CASES)
+
+.PHONY: test-aa64
 
 # No prerequisite on $(TEST_STICK): rebuilding it needs sudo and takes seconds
 # of cryptsetup, so it stays an explicit `make test-stick`. The rig says so if

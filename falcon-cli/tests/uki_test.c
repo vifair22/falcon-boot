@@ -325,6 +325,25 @@ static void test_uki_layout_places_sections(void **state)
     assert_int_equal(rd32(g_stub + TABLE + 40u + 8u), sizeof(g_merged) - 1u);
 }
 
+/* A merge longer than the stub's .sbat: its own section, the stub's
+ * renamed so shim finds one. */
+static void test_uki_layout_gives_a_long_sbat_its_own_section(void **state)
+{
+    char big[0x300];
+    uki_part p[1] = { { ".sbat", sizeof(big), 0, 0, 0 } };
+    uint64_t out_len = 0;
+
+    (void)state;
+    memset(big, 'a', sizeof(big));
+    assert_int_equal(uki_layout(g_stub, sizeof(g_stub), p, 1, big,
+                                sizeof(big), 0, &out_len), SGN_OK);
+    assert_memory_equal(g_stub + TABLE + 40u, ".sbat.st", 8);
+    assert_memory_equal(g_stub + TABLE + 2u * 40u, ".sbat\0\0\0", 8);
+    assert_int_equal(p[0].raw_size, 0x400u);
+    /* The stub's section keeps what it had. */
+    assert_memory_equal(g_stub + 0x600, STUB_SBAT, strlen(STUB_SBAT));
+}
+
 static void test_uki_layout_clears_nx_for_a_kernel_without_it(void **state)
 {
     uki_part p[1] = { { ".linux", 1, 1, 0, 0 } };
@@ -622,6 +641,64 @@ static void test_uki_build_merges_the_kernel_sbat(void **state)
     free(img);
 }
 
+/* A kernel that is itself a stub image: its .linux is what is wrapped, its
+ * devicetree sections and .uname come along, and nothing else of it. */
+static void test_uki_build_unwraps_a_stub_image(void **state)
+{
+    static const char dtb[] = "DTB-AUTO";
+    static const char hwids[] = "HWIDS";
+    static const char uname[] = "6.19.10-test";
+    char stub[256];
+    char kernel[256];
+    char initrd[256];
+    char out[256];
+    uint8_t o[0x1400];
+    uint8_t k[0x800];
+    uki_spec spec = { 0 };
+    uint8_t *img = NULL;
+    size_t len = 0;
+    pe_hdr h;
+    size_t off;
+    size_t size;
+
+    (void)state;
+    make_inputs(stub, kernel, initrd, sizeof(stub));
+    build_pe(k, sizeof(k), 1, 0);
+    add_bzimage(k, "9.9.9-inner (me@host) #1");
+    build_pe(o, sizeof(o), 0, 0);
+    wr16(o + COFF + 2, 5u);
+    sect(o, 1, ".dtbauto", 0x2000u, sizeof(dtb) - 1u, 0x600u, 0x200u);
+    memcpy(o + 0x600, dtb, sizeof(dtb) - 1u);
+    sect(o, 2, ".hwids", 0x3000u, sizeof(hwids) - 1u, 0x800u, 0x200u);
+    memcpy(o + 0x800, hwids, sizeof(hwids) - 1u);
+    sect(o, 3, ".uname", 0x4000u, sizeof(uname) - 1u, 0xA00u, 0x200u);
+    memcpy(o + 0xA00, uname, sizeof(uname) - 1u);
+    sect(o, 4, ".linux", 0x5000u, sizeof(k), 0xC00u, sizeof(k));
+    memcpy(o + 0xC00, k, sizeof(k));
+    put("stub-image", o, sizeof(o), kernel, sizeof(kernel));
+    (void)snprintf(out, sizeof(out), "%s/unwrapped.efi", g_dir);
+
+    spec.stub = stub;
+    spec.kernel = kernel;
+    spec.initrd = NULL;
+    spec.cmdline = "quiet";
+    spec.osrel = "ID=x\n";
+    spec.out = out;
+    assert_int_equal(uki_build(&spec), SGN_OK);
+    read_back(out, &img, &len);
+    expect_section(img, len, ".linux", k, sizeof(k));
+    expect_section(img, len, ".dtbauto", dtb, sizeof(dtb) - 1u);
+    expect_section(img, len, ".hwids", hwids, sizeof(hwids) - 1u);
+    expect_section(img, len, ".uname", uname, sizeof(uname) - 1u);
+    /* The inner kernel is NX_COMPAT, the stub image around it not. */
+    assert_int_equal(img[OPT + 71] & 0x01, 0x01);
+    assert_int_equal(pe_parse(img, len, &h), PE_OK);
+    assert_int_equal(pe_find_section(&h, img, len, ".linux", &off, &size),
+                     PE_OK);
+    assert_int_equal(rd32(img + off), rd32(k));
+    free(img);
+}
+
 static void test_uki_build_refuses_bad_inputs(void **state)
 {
     char stub[256];
@@ -680,6 +757,61 @@ static void test_uki_build_refuses_bad_inputs(void **state)
 
     /* Nothing is left behind by a failed build. */
     assert_int_not_equal(stat(out, &st), 0);
+}
+
+/* An arm64 stub cannot start an x86-64 kernel, nor the reverse: the build
+ * says so instead of writing a UKI that would not boot. */
+static void test_uki_build_refuses_a_stub_of_another_machine(void **state)
+{
+    char stub[256];
+    char kernel[256];
+    char initrd[256];
+    char out[256];
+    uint8_t s[STUB_LEN];
+    uki_spec spec = { 0 };
+
+    (void)state;
+    make_inputs(stub, kernel, initrd, sizeof(stub));
+    build_pe(s, sizeof(s), 1, 1);
+    wr16(s + COFF, PE_MACHINE_ARM64);
+    put("stub-aa64.efi", s, sizeof(s), stub, sizeof(stub));
+    (void)snprintf(out, sizeof(out), "%s/mismatch.efi", g_dir);
+
+    spec.stub = stub;
+    spec.kernel = kernel;
+    spec.cmdline = "quiet";
+    spec.osrel = "ID=x\n";
+    spec.out = out;
+    assert_int_equal(uki_build(&spec), SGN_ERR_FORMAT);
+    assert_non_null(strstr(sgn_error(), "only its own machine"));
+}
+
+/* ukify's scrape_generic: the first "Linux version <digit>... (" anywhere
+ * in the bytes, which is how an arm64 Image carries its version. */
+static void test_uki_uname_generic(void **state)
+{
+    static const char img[] = "\x00\x01junk Linux version x.1 (no) "
+                              "Linux version 6.12.48-arm64 (debian@build) "
+                              "#1 SMP";
+    static const char none[] = "Linux version 6.12.48-arm64 #1";
+    char out[UKI_UNAME_MAX + 1u];
+
+    (void)state;
+    assert_int_equal(uki_uname_generic((const uint8_t *)img, sizeof(img) - 1u,
+                                       out, sizeof(out)), 1);
+    assert_string_equal(out, "6.12.48-arm64");
+    assert_int_equal(uki_uname_generic((const uint8_t *)none,
+                                       sizeof(none) - 1u, out, sizeof(out)),
+                     0);
+    assert_int_equal(uki_uname_generic(NULL, 4, out, sizeof(out)), 0);
+}
+
+static void test_uki_default_stub(void **state)
+{
+    (void)state;
+    assert_string_equal(uki_default_stub(PE_MACHINE_AMD64), UKI_STUB_X64);
+    assert_string_equal(uki_default_stub(PE_MACHINE_ARM64), UKI_STUB_AA64);
+    assert_null(uki_default_stub(0x014cu));
 }
 
 /* ------------------------------------------------------------ uki verb */
@@ -748,11 +880,16 @@ int run_uki_tests(void)
         cmocka_unit_test(test_uki_uname_reads_the_version),
         cmocka_unit_test(test_uki_uname_needs_the_whole_shape),
         cmocka_unit_test(test_uki_uname_refuses_what_is_not_a_bzimage),
+        cmocka_unit_test(test_uki_uname_generic),
+        cmocka_unit_test(test_uki_default_stub),
+        cmocka_unit_test(test_uki_build_refuses_a_stub_of_another_machine),
         cmocka_unit_test(test_uki_sbat_merge_in_order),
         cmocka_unit_test(test_uki_sbat_merge_skips_what_is_not_sbat),
         cmocka_unit_test(test_uki_sbat_merge_reports_no_space),
         cmocka_unit_test(test_uki_cmdline_collapses_whitespace),
         cmocka_unit_test_setup(test_uki_layout_places_sections, setup_stub),
+        cmocka_unit_test_setup(test_uki_layout_gives_a_long_sbat_its_own_section,
+                               setup_stub),
         cmocka_unit_test_setup(test_uki_layout_clears_nx_for_a_kernel_without_it,
                                setup_stub),
         cmocka_unit_test_setup(test_uki_layout_rounds_size_of_headers,
@@ -763,6 +900,7 @@ int run_uki_tests(void)
         cmocka_unit_test(test_uki_build_end_to_end),
         cmocka_unit_test(test_uki_build_bios_only),
         cmocka_unit_test(test_uki_build_merges_the_kernel_sbat),
+        cmocka_unit_test(test_uki_build_unwraps_a_stub_image),
         cmocka_unit_test(test_uki_build_refuses_bad_inputs),
         cmocka_unit_test(test_uki_main_arguments),
     };

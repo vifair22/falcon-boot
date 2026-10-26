@@ -1,7 +1,8 @@
 # falcon-boot Design
 
-A single-purpose, auditable multi-boot loader for x86: 64-bit UEFI first,
-with a BIOS loader alongside that runs on 32-bit processors as well. A distilled Ventoy: drag-and-drop ISO booting, plus a
+A single-purpose, auditable multi-boot loader for UEFI on x86-64 and
+AArch64, with a BIOS loader alongside that runs on 32-bit x86 processors as
+well. A distilled Ventoy: drag-and-drop ISO booting, plus a
 first-class path for booting a personal LUKS-backed OS via a Unified Kernel
 Image. Section 11 draws every route both loaders take.
 
@@ -14,17 +15,26 @@ change it.
 
 ### In scope (MVP)
 
-1. UEFI x64 firmware, and x86 BIOS through a separate, opt-in loader
+1. UEFI firmware on x86-64 and AArch64, one source built twice (Section
+   9), and x86 BIOS through a separate, opt-in loader
    (`falcon-bios/`, item 6). The BIOS loader is i586 and runs on every
    i586 or later processor, booting 32-bit and 64-bit kernels (Section
-   13.8). No IA32 UEFI (see Non-goals).
-2. Drag-and-drop ISO booting from an exFAT partition, Ventoy-style: copy an
+   13.8). No IA32 UEFI (see Non-goals). An AArch64 machine's firmware
+   describes it with ACPI (AAVMF, servers, laptops) or a devicetree
+   (U-Boot's UEFI, boards); the loader reads neither, and the firmware's
+   table reaches the kernel through the EFI configuration table untouched.
+   A distribution that picks its own devicetree does it in its kernel image
+   (Fedora's arm64 kernel: sd-stub with `.dtbauto` and `.hwids`), which a
+   bless keeps (Section 8.1); GRUB's `devicetree` command is not read, as
+   no medium in the corpus uses it. Under U-Boot an isohybrid ISO boots as
+   a disk (Section 6 stage 3).
+2. Drag-and-drop ISO booting from an exFAT (or FAT32) partition, Ventoy-style: copy an
    `.iso` onto the stick from any OS, it appears in the menu, it boots. No
    host-side registration step. (When Secure Boot is ON, unsigned media that does
    not ship its own signed chain requires the optional `sign` bless step; see
    Section 7.)
 3. Booting a personal OS: a Unified Kernel Image (UKI) sitting on a small
-   LUKS2+ext4 partition, whose initramfs then unlocks the real root/home on a
+   LUKS2 partition (ext4 inside, or FAT32), whose initramfs then unlocks the real root/home on a
    second LUKS2 partition and pivots into it.
 4. Chaining through Fedora's shim-x64 16.1 (dual MS-signed, 2011 + 2023
    CAs; Section 4): Secure Boot upheld when
@@ -84,8 +94,8 @@ GPT, four partitions:
 
 ```
 p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert; BIOS stage 3 in its reserved sectors
-p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets
-p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key (closed list: Section 5.3), argon2id keyslot at the stick's fixed cost
+p2  ISOs       exFAT   bulk     the ISO library (drag-and-drop target) + injection assets; FAT32 by --p2-fs
+p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI + MOK private key (closed list: Section 5.3), argon2id keyslot at the stick's fixed cost; ext4 or another filesystem by --p3-fs
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
@@ -101,7 +111,16 @@ Rationale per partition:
   as a station's and jump's floppy.
 - **p2 exFAT.** exFAT so large ISOs (>4 GB) fit and any modern OS
   (Windows/macOS/Linux) can drop files on it. Firmware does not read exFAT, so
-  we bring our own read-only exFAT driver (Section 6).
+  we bring our own read-only exFAT driver (Section 6). `mkstick create
+  --p2-fs fat32` makes it FAT32 instead, which every OS and every WinPE also
+  reads, at the price of no file of 4 GiB or more (most Windows ISOs) and
+  more fragmentation: exFAT stores a file as one run with no chain, FAT
+  follows a chain, and an ISO in more than `EXTMAP_MAX_EXTENTS` (500) runs
+  boots without falcon-hook (Section 6.2). Nothing else changes: both are
+  read through the fs registry, and the extent map's readers (falcon-hook,
+  winjump, falcon-vdisk) link exFAT and FAT both (`fs_reg_library.c`). A
+  Linux filesystem on p2 would lose the drag-and-drop hosts and WinPE, so
+  p2 offers none.
 - **p3 UKI shelf, argon2id at the stick's fixed cost.** LUKS2 here uses an
   **argon2id** keyslot, but not at the cost `cryptsetup luksFormat`
   benchmarks: that is sized for the machine running it (up to a gigabyte of
@@ -139,6 +158,14 @@ simple or firmware-readable. mkstick states the consequences at creation:
 - The p3 filesystem choice is orthogonal (see the fs_ops registry,
   Section 9); p3 is read by our EFI driver alone, and the initramfs
   unlocks and mounts p4 directly.
+
+**p3's filesystem** is ext4 unless `mkstick create --p3-fs` names another:
+FAT32, btrfs or xfs (whose p3 is at least 320 MiB: `mkfs.xfs` makes nothing
+under 300 MB, and the LUKS2 header comes first). Only the loaders' own drivers read it, so the choice is whatever
+the OS that maintains the shelf writes best; the loaders read each the same
+way (Section 5.4 for one left mounted). FAT keeps no file modes, so the
+MOK key's 0600 is the mount's on a FAT shelf: mkstick mounts it
+`umask=0077`, and a host's `/etc/fstab` line for it does the same.
 
 Both loaders read a plaintext shelf.
 
@@ -193,11 +220,12 @@ passphrase and without the partition table's help:
   `{"type":"falcon","keyslots":[],"version":1,"role":"shelf","install_id":"<32 hex>"}`.
   It is read before any key is known, survives cryptsetup's own operations
   and is shown and edited by `cryptsetup token`.
-- **exFAT and a plaintext ext4 shelf** (p2, p3 with `--p3-plain`): a file at
+- **The library and a plaintext shelf** (p2, p3 with `--p3-plain`): a file at
   the root, `/.falcon`, one line of text, `falcon 1 <role> <install id>`.
-  exFAT's boot code is covered by its boot checksum and ext4 has no
-  unowned bytes fsck leaves alone, and the loaders mount these volumes
-  anyway. The same record in text.
+  exFAT's boot code is covered by its boot checksum, ext4 has no
+  unowned bytes fsck leaves alone, a FAT shelf's boot sector is not
+  claimed as a record (that form names a `boot` partition), and the loaders
+  mount these volumes anyway. The same record in text.
 
 **The partition type only narrows the search.** p2 keeps the Microsoft basic-data
 type, because Windows' `partmgr` creates no volume for a GPT partition whose
@@ -346,6 +374,7 @@ loader.
 | `/EFI/BOOT/BOOTX64.EFI` | Fedora shim-x64 16.1 | Microsoft UEFI CA 2011 and Microsoft UEFI CA 2023 as shipped, plus ours when appended by hand (Manual Section 11.1) |
 | `/EFI/BOOT/mmx64.efi` | MokManager, shim's enrollment UI (Fedora naming) | Fedora Secure Boot CA as shipped, plus ours when appended by hand (Manual Section 11.1) |
 | `/EFI/BOOT/grubx64.efi` | OUR loader (see note on next-stage name) | **ours, and nothing else** |
+| `/EFI/BOOT/BOOTAA64.EFI`, `mmaa64.efi`, `grubaa64.efi` | the same chain for AArch64: Fedora shim-aa64 16.1, its MokManager, our AArch64 loader | shimaa64: Microsoft UEFI CA 2023 alone; the loader: ours |
 | `/falcon-boot.cer` | our public cert, for first-boot enrollment | not signed; it is a certificate |
 
 "Ours" throughout means the MOK keypair whose public half is
@@ -357,6 +386,12 @@ The shim is Fedora's shim-x64 16.1: it
 carries both Microsoft signatures (2011 + 2023), its vendor trust is one
 Fedora CA with no vendor dbx payload, and it is pinned by Koji package URL.
 The SHIM_IMAGE_LOADER load path (Section 7.6) needs shim 16.0 or later.
+AArch64's is the same release, shim-aa64 16.1, signed by the 2023 CA alone:
+a machine whose db holds only the 2011 CA refuses it, as Debian's
+`AAVMF_VARS.ms.fd` does. The two chains share p1 and their names do not
+meet, so one stick boots either machine; mkstick reads each shim's
+next-stage name as it does x64's, and refuses a shim whose PE machine is
+the other architecture's.
 
 Boot chain under Secure Boot:
 
@@ -437,8 +472,8 @@ fingerprints instead:
 openssl x509 -in falcon-mok.crt -noout -fingerprint -sha256
 ```
 
-`archusb`'s `archusb-status-collect` identifies signers by subject for this
-reason.
+A host tool that reports what signed a binary identifies signers by subject
+for this reason.
 
 ### 4.3 The ESP is not a storage location
 
@@ -466,7 +501,8 @@ Flow:
 1. User selects the personal-OS entry in our menu.
 2. Loader prompts for the passphrase.
 3. Loader unlocks **p3** (LUKS2, argon2id or pbkdf2) using our LUKS + AES-XTS stack
-   (Section 6), and reads the UKI off the ext4 inside.
+   (Section 6), and reads the UKI off the filesystem inside (ext4 by
+   default; Section 3).
 4. Loader synthesizes a **virtual read-only filesystem** carrying the UKI plus
    a credential file holding the passphrase (Section 5.1), then
    `LoadImage`/`StartImage` the UKI from that filesystem. The UKI is signed by
@@ -513,12 +549,9 @@ already typed. p4 is separate only so EFI never mounts root.
   ```
 
   It ships as an initramfs build hook, so a rebuild after a kernel or
-  systemd update keeps it: for mkinitcpio the `falcon-credential` install
-  hook (the archusb repo, `install/falcon-credential`), for dracut the
-  `99falcon-credential` module (the thinkpad-t430 repo,
-  `gentoo/usr/lib/dracut/modules.d/99falcon-credential/`). With the drop-in
-  the unlock succeeds from the credential with no prompt; without it the
-  unit cannot start.
+  systemd update keeps it: a mkinitcpio install hook, or a dracut module
+  (`docs/personal-os.md` has both). With the drop-in the unlock succeeds from
+  the credential with no prompt; without it the unit cannot start.
 
   **The same failure recurs after switch-root, and needs its own copy of the
   fix.** `/run` is one tmpfs across the pivot, so
@@ -531,15 +564,17 @@ already typed. p4 is separate only so EFI never mounts root.
   unit there opens with a keyfile, and a `LoadCredential=` naming a file
   absent on a boot without falcon would fail the unit.
 
-  Both halves ship from the OS's own repository, not this one: **archusb**
-  (https://git.airies.net/vifair22/archusb, Arch, mkinitcpio) and
-  **thinkpad-t430** (https://git.airies.net/vifair22/thinkpad-t430, Gentoo
-  with systemd, dracut).
+  Both halves belong to the OS, not this project; `docs/personal-os.md` is
+  the guide to building them (Arch with mkinitcpio, dracut for other systemd
+  distributions).
 - **UKI discovery convention:** the loader looks in `/uki/` first,
   then `/EFI/Linux/` (the Boot Loader Specification location, so a p3
   populated by `kernel-install` still boots), taking regular files with a
-  case-insensitive `.efi` suffix, sorted by name; one match boots directly,
-  several are offered in a post-unlock chooser. mkstick stages to `/uki/`.
+  case-insensitive `.efi` suffix, sorted by name. An image whose PE
+  machine is the other 64-bit architecture's is left out (`shelf_keep_machine`),
+  so one shelf can hold an x86-64 and an ARM64 personal OS and each
+  machine offers its own; one match boots directly, several are offered in
+  a post-unlock chooser. mkstick stages to `/uki/`.
 
 ### 5.1 The handoff mechanism
 
@@ -625,15 +660,14 @@ small, and it is what has to be right for the stick to boot.
 | `/falcon-mok.crt` | its public half, the same certificate as p1's `falcon-boot.cer` | signing and enrollment |
 | `/uki/<name>.efi` | every bootable UKI: the personal OS, its rollback, the signing appliance | the loader's shelf scan |
 | `/vmlinuz-<kernel>` | one plain kernel copy per installed kernel | mkinitcpio, never the loader |
-| `/lost+found` | ext4's own | the filesystem |
+| `/lost+found` | ext4's own, on an ext4 shelf | the filesystem |
 
 **The kernel copies are load-bearing.** Arch's `linux` package ships the
 kernel only at `usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman
 script maintains a copy at whatever absolute path `ALL_kver` names, provided
 no package owns that path. `ALL_kver` points at `/efi/vmlinuz-linux`, and
 that is how the UKI gets rebuilt on a kernel upgrade. Delete them and the
-next upgrade rebuilds nothing, silently. archusb's `install/` presets record
-the reasoning.
+next upgrade rebuilds nothing, silently.
 
 **Only `*.efi` directly under `/uki` is visible to the loader.**
 `falcon-core/src/media/shelf.c` matches on the `.efi` suffix and nothing
@@ -707,6 +741,47 @@ installs on, always meets a shelf mounted right now).
   (`falcon-cli/src/common/jmem.c`). The scratch block held plaintext from
   the shelf, so each is wiped when it is given up. Memory that cannot be
   had is a page like 5.2's argon2id one: what it needs, what is free.
+
+A FAT shelf has no journal. Linux sets its dirty bit while it is mounted
+and the loaders read it as it stands: what a hibernated OS wrote back is
+there, and what it had not is not, which is the state the OS resumes over.
+Nothing is replayed, so the page never says the last changes were not
+read; a power cut in the middle of a write can leave a FAT shelf that needs
+`fsck.fat` from another system, as it would anywhere.
+
+A btrfs shelf needs nothing replayed. It is copy-on-write: a commit writes
+new trees and then the superblock that names them, so the superblock always
+names a tree that was whole when it was written, and a hibernated or
+interrupted OS leaves the last commit's (`falcon-core/src/fs/btrfs.c`).
+What a commit does not cover is the log tree, the fsyncs since it, which is
+not read: the booting page says `the shelf's last few seconds of changes
+were not read.`, as for ext4's fast commits. The reader holds no node
+whole: a node (16 KiB by default) is read through the volume's 4 KiB
+window, and its crc32c is streamed through the same window the first time
+a mount visits it.
+
+An xfs shelf's log is replayed in memory when it is not clean
+(`falcon-core/src/fs/xfslog.c`), as the kernel's recovery would replay it
+and never written. Clean is the last whole record before the head being
+the unmount record alone; the head is where the cycle number stamped on
+every 512-byte block of the log drops, moved back over any block of the
+in-flight iclogs that still carries the older cycle, and over a last
+record that runs past it or fails its crc32c. From the last record's tail
+to the head, the committed transactions' buffer items (their dirty
+128-byte chunks, less the buffers a later cancel record names) and inode
+items (the log's core converted to the disk's byte order, the data fork
+copied, a B+tree root laid out at the fork's capacity) are laid over the
+volume as 512-byte blocks, sorted, which every read goes through; a block
+or inode whose own LSN is past the transaction's is newer on disk and left.
+The checksum of a block the replay wrote is not checked. Intents to free
+extents or update the rmap and refcount trees are not finished: they change
+nothing this reader reads. An unfinished bmap or exchange intent changes
+what a file maps, and only the kernel finishes it: that volume is refused
+with `the filesystem's log needs Linux to finish it; mount it once from
+Linux.` The memory is asked for once, sized by a first walk (16 bytes a
+transaction, 16 a cancel, 8 an intent, and 524 for every block the items
+could touch), from the same `fs_jmem` as ext4's table, with the same page
+when it cannot be had.
 
 On the OS side, `/sys/power/freeze_filesystems` set to 1 makes the kernel
 freeze filesystems before it hibernates, and ext4's freeze empties the
@@ -825,7 +900,7 @@ an unlock, then `falcon-bli: FalconReadInfo=<line>`, each with
 
 No host-side registration. The stages:
 
-1. **Scan.** At boot, the exFAT driver enumerates `*.iso` and `*.img` on p2.
+1. **Scan.** At boot, p2's driver (exFAT, or FAT) enumerates `*.iso` and `*.img` on p2.
    That listing is the menu, presented **by folder** (Ventoy tree-view
    style): each menu screen shows the current directory's subfolders and
    images, entering a folder descends, ".." (or ESC) goes up, and ESC at the
@@ -857,7 +932,13 @@ No host-side registration. The stages:
    chainloaded. falcon-core's ISO9660 and UDF readers serve everything else
    (the survey, direct kernel boot, the Windows and BSD patches; Section
    6.4), since a Linux kernel lives in the ISO9660 tree rather than in the El
-   Torito image.
+   Torito image. U-Boot's partition code surfaces the El Torito image too,
+   but its FAT driver refuses a 512-byte FAT on 2048-byte media, so under
+   U-Boot an isohybrid ISO (an MBR entry of type 0xEF or 0xEE) is published
+   as a disk of 512-byte sectors instead, the stick it was written to be,
+   and the firmware finds its ESP by the partition table (`iso/iso.c`). The
+   choice is made before publishing: U-Boot does not bind a device that was
+   published, torn down and published again.
 4. **Chainload through the verifying `LoadImage`.** `LoadImage` the ISO's
    embedded `\EFI\BOOT\BOOTX64.EFI`, then `StartImage`, through shim
    (Section 7.6):
@@ -887,7 +968,7 @@ exists, and drops to an emergency shell.
 post-`ExitBootServices` media problem at the boot stage: the Windows boot
 manager reads `\sources\boot.wim` off the virtual CD *while still in boot
 services* and materialises WinPE as a RAM disk, and WinPE then re-enumerates
-hardware with its own drivers and finds the exFAT p2 natively. The framework
+hardware with its own drivers and finds p2 natively (exFAT or FAT32). The framework
 below does not apply to Windows; its problem is later and narrower (Section
 6.3).
 
@@ -921,7 +1002,7 @@ Injectors are data dropped into a registry, never core surgery:
   the extent-map hook). Kernel modules cannot be shipped (they must match the
   running kernel), so these facts gate which strategy each family can use
   and are recorded per family, never assumed.
-- **Extent-map computation.** In the exFAT driver, resolve an ISO file to its
+- **Extent-map computation.** In p2's driver (exFAT or FAT), resolve an ISO file to its
   ordered list of physical extents on p2 (`media/extmap.c`).
 - **initrd cpio append.** Load the ISO's initrd into memory, concatenate the
   cpio segment (`media/cpio.c`), pass the combined image to the kernel.
@@ -976,7 +1057,7 @@ EFI loader (`virtdisk.h` and `libvirtdisk.a` are in that toolchain), and a
 second time for i686 for 32-bit media. The served `boot.wim` has
 `\Windows\System32\winpeshl.exe` replaced by winjump, with the original
 alongside it as `winpeshl_orig.exe` (Section 6.4). At runtime winjump
-attaches the ISO read-only from the exFAT partition and then executes the
+attaches the ISO read-only from the library partition and then executes the
 original `winpeshl.exe`, so Windows Setup proceeds as it would have and
 finds `install.wim` on a real, mounted CD-ROM. The image patched is the one
 the WIM header names as bootable (`falcon-core/src/wim/wim.c`), index 2
@@ -984,7 +1065,7 @@ the WIM header names as bootable (`falcon-core/src/wim/wim.c`), index 2
 floppy drive raises when it probes drives (`SEM_FAILCRITICALERRORS`).
 
 **falcon-vdisk.** Where `AttachVirtualDisk` cannot serve - Vista and 7, whose
-WinPE has no ISO support and cannot read the exFAT partition the ISO lives
+WinPE has no ISO support and cannot read an exFAT partition the ISO lives
 on, and 2000/XP, which have no WinPE - winjump loads `falcon-vdisk`
 (`falcon-vdisk/`; a native NT CD-ROM driver, built for both widths from one
 source as the hook and winjump are) with `CreateService`/`StartService` and
@@ -1243,9 +1324,12 @@ What that puts in the loader, each a milestone in the roadmap:
   reach the hook in the initrd itself (`/falcon/map`) on a direct boot, as a
   credential sd-stub packs beside a blessed wrap, or, for wraps older than
   that credential, in a volatile EFI variable (Section 11.4). It is built
-  at two widths from one source, x86-64 and i586: the UEFI loader appends
-  the x86-64 one, and falcon-bios whichever the kernel's setup header asks
-  for (Section 11.3.6). Per-family
+  three ways from one source, x86-64, i586 and AArch64: each UEFI loader
+  appends its own architecture's, the sign tool the kernel's, and
+  falcon-bios whichever the kernel's setup header asks for (Section
+  11.3.6). A kernel that is one gzip member, as Debian's and Ubuntu's
+  arm64 `vmlinuz` is, is unpacked before LoadImage, and before a wrap; the
+  Image inside carries the EFI stub and the signature. Per-family
   cmdline templates are the preferred route where a family has one; the
   hook is what reaches the rest, with per-family nudges learned from
   Ventoy's hooks where label matching alone is not enough.
@@ -1400,8 +1484,9 @@ enrol the CA or turn Secure Boot off for that job. The Manual says so.
     the file on p2. In scope for the menu and for blessing. **Blessing these
     modifies the user's file, and the tool says so before it does**: signing
     a PE appends a certificate, and there is nothing beside the payload to put
-    it in. A `.efi` is signed in place; for a `.img` the payload inside its
-    filesystem is. The review that authorises it names the file and says it
+    it in. A `.efi` is signed in place; for a `.img` the payloads inside its
+    filesystems are, `\EFI\BOOT\BOOTX64.EFI` and `BOOTAA64.EFI` wherever
+    either is (MemTest86 carries both). The review that authorises it names the file and says it
     will be written to.
 - **Secure Boot ON, validation off (user opt-in, 7.4):** shim permits
   everything; every ISO boots with nothing signed, on that machine, with
@@ -1546,6 +1631,10 @@ built as a portable static binary for both:
   `falcon-core`'s ISO9660/UDF reader. PID 1 and the sign tool are one static
   binary. The image holds the kernel, that binary, `sbsign` with its
   libcrypto, and the exFAT and vfat modules to write p2.
+- **One image per architecture, one kernel source.** The x86-64 and
+  AArch64 appliances are the same recipe on Fedora's kernel for each
+  (`falcon-appliance/image/mk-appliance.sh`). Each carries both sd-stubs,
+  so either blesses media for either machine (Section 8.1).
 
 ### 7.6 Load-path plumbing
 
@@ -1747,8 +1836,8 @@ not a bless (the personal OS, the appliance), `[no efi]` for a medium with no
 `\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and otherwise the CN of the
 topmost certificate in the signer's chain, cut to 16 columns. Yellow is
 reserved for "this will not boot here": shim refusing the first stage, a
-UKI with validation off, `{BIOS ONLY}`, or on falcon-bios `{EFI ONLY}` and
-`{64-BIT ONLY}`.
+UKI with validation off, `{BIOS ONLY}`, `{X64 ONLY}`, `{ARM64 ONLY}`, or on
+falcon-bios `{EFI ONLY}`, `{ARM64 ONLY}` and `{64-BIT ONLY}`.
 
 Reasons, exhaustive:
 
@@ -1760,7 +1849,8 @@ Reasons, exhaustive:
 | `{REVOKED}` | a signer certificate or the image hash is in `dbx` or `MokListXRT`, or an SBAT generation is below `SbatLevelRT` | newer media |
 | `{VALIDATION OFF}` | a UKI entry (the personal OS, a fresh bless that is a wrap, a bare payload with a `.linux` section, the station's UKI rows) when `load_ops_inner_load_blocked` holds for this boot (7.6): validation disabled (Section 7.4) | re-enable validation |
 | `{BIOS ONLY}` | an ISO this machine cannot boot at all, in any Secure Boot state (below) | boot the stick in BIOS mode |
-| `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot (below) | boot the stick in UEFI mode |
+| `{X64 ONLY}`, `{ARM64 ONLY}` | an ISO only the other 64-bit architecture's machine boots: on AArch64 an x86-64 one, on x86-64 an ARM64 one (below); on falcon-bios `{ARM64 ONLY}` too, for one only an ARM64 machine's UEFI boots | boot it on that machine |
+| `{EFI ONLY}` | falcon-bios only: an ISO no BIOS route can boot, and an x86-64 machine's UEFI can (below) | boot the stick in UEFI mode |
 | `{64-BIT ONLY}` | falcon-bios only, on a processor without long mode: an ISO every way into which needs one (below) | boot it on a 64-bit machine |
 
 `{BIOS ONLY}` is the one reason that is not about a signature. It is a fact
@@ -1768,16 +1858,22 @@ about the medium, read by `falcon-core/src/media/uefiboot.c` during the
 survey and shown in every Secure Boot state. An ISO is BIOS-only when neither
 way the UEFI loader boots an ISO can reach it:
 
-1. It has no UEFI boot image of its own: no El Torito entry for platform
-   0xEF, no `\EFI\BOOT\BOOTX64.EFI` on any of its volumes, and no
-   `\bootmgr.efi`. Any one of them makes a UEFI medium, whatever it holds: a
-   0xEF image with only `BOOTIA32.EFI` (Windows 8.1 and 10 x86) is left
-   alone.
+1. It has no UEFI boot image of its own for this machine: on x86-64 no El
+   Torito entry for platform 0xEF, no `\EFI\BOOT\BOOTX64.EFI` on any of
+   its volumes, and no `\bootmgr.efi` (a 0xEF image with only
+   `BOOTIA32.EFI`, Windows 8.1 and 10 x86, is left alone); on AArch64 no
+   `\EFI\BOOT\BOOTAA64.EFI`.
 2. Its kernel cannot be booted directly (DIR, 11.2.9): the kernel the default
    CD entry of its boot configuration names is a bzImage with no PE header,
-   or a PE for a processor other than x86-64. Windows media has no kernel for
-   this route, so for the Windows family (`media/family.c`) the first test is
-   the whole rule.
+   or a PE for a processor other than this machine's. Windows media has no
+   kernel for this route, so for the Windows family (`media/family.c`) the
+   first test is the whole rule.
+
+The rule answers for the loader's own architecture. A medium whose only way
+in is the other 64-bit architecture's removable-media loader, or a kernel
+PE32+ for it, is `{X64 ONLY}` on AArch64 and `{ARM64 ONLY}` on x86-64, and
+is refused with a page the same way; it can still be blessed, for that
+architecture's machines.
 
 Anything the medium does not prove is not marked: no boot configuration, a
 kernel that cannot be read, bytes that are neither a PE nor a bzImage, a
@@ -1799,8 +1895,8 @@ same colours.
 
 #### The BIOS menu's tags
 
-falcon-bios has no signatures to predict. Two reasons, both facts about the
-medium read by `falcon-core/src/media/biosboot.c`, drawn in the colours
+falcon-bios has no signatures to predict. Three reasons, all facts about
+the medium read by `falcon-core/src/media/biosboot.c`, drawn in the colours
 above:
 
 - `{EFI ONLY}`: no BIOS route can reach the medium. Its El Torito catalog has
@@ -1811,7 +1907,12 @@ above:
   which the direct route (11.3.6) starts. Every entry counts, not only the
   default. For the Windows family the first test is the whole rule. The
   virtual CD refuses a hard-disk emulation image, but it is a BIOS boot
-  image, and a medium carrying one is not marked.
+  image, and a medium carrying one is not marked. Which UEFI machine boots
+  it instead is the UEFI menu's own rule 1 (`uefiboot_image_in`), asked as
+  an x86-64 machine: an x86-64 loader, or a 0xEF entry taken at its word,
+  is `{EFI ONLY}`; nothing but `\EFI\BOOT\BOOTAA64.EFI` is
+  `{ARM64 ONLY}`, since this PC's own UEFI could not start it either; and
+  neither leaves the row unmarked (a data disc).
 - `{64-BIT ONLY}`: shown only when the processor has no long mode
   (`linux_cpu_is_64`), and only for a medium that proves every way in needs
   one. Linux: every entry of the CD configuration names a kernel that could
@@ -2209,11 +2310,14 @@ to system tools rather than reimplementing cryptography or filesystem
 creation:
 
 - `falcon-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
-  p2 exFAT (`mkfs.fat`, `mkfs.exfat`), and create p3/p4 via `cryptsetup
+  p2 exFAT (`mkfs.fat`, `mkfs.exfat`; `mkfs.fat -F 32` for `--p2-fs
+  fat32`), and create p3/p4 via `cryptsetup
   luksFormat` with the correct KDF per partition (argon2id at the stick's
   fixed cost on p3, `--pbkdf argon2id --pbkdf-memory 32768
   --pbkdf-force-iterations 4 --pbkdf-parallel 4`; cryptsetup's benchmarked
-  argon2id on p4), then `mkfs.ext4` inside each. cryptsetup's host-side
+  argon2id on p4), then `mkfs.ext4` inside each (or, on p3, the
+  filesystem `--p3-fs` names: `mkfs.fat -F 32`, `mkfs.btrfs`,
+  `mkfs.xfs`). cryptsetup's host-side
   benchmark would size p3's cost for the host, which the next machine may not
   have. falcon-core's argon2id costs about 42 ms per MiB per pass on the
   A21m (i686, 548 MHz), linear in memory and passes, and lanes filled in
@@ -2284,6 +2388,13 @@ an unverified kernel off the medium (7.7); memtest86+ reads nothing. Embedding t
 costs p2 space (~100-250 MB per blessed ISO) and makes the entire blessed
 boot chain signed, which closes the unsigned-initrd residual of Section 7.5
 for blessed media.
+A kernel that is itself a stub image (Fedora's arm64 kernel: sd-stub, the
+kernel as its `.linux`, and the devicetrees it picks among) is unwrapped:
+its `.linux` is the wrap's kernel and its `.dtb`, `.dtbauto`, `.hwids` and
+`.uname` come along. Wrapped whole, its own stub would ask shim to verify
+the kernel inside, which nothing signed. A merged `.sbat` longer than the
+stub's section becomes a `.sbat` of its own and the stub's is renamed
+`.sbat.st`.
 `--no-initrd` produces the kernel+cmdline-only wrap for space-constrained
 sticks, reopening that residual for this medium. The loader does not
 deliver the ISO's initrd from p2 to a thin wrap.
@@ -2291,7 +2402,7 @@ Two more reasons the wrap is a UKI:
 
 - The shim load path may enforce SBAT on everything it loads, and
   raw bzImages carry no `.sbat` (Section 7.6).
-- p2 is writable, unverified exFAT. Embedding the cmdline in the signed
+- p2 is writable, unverified exFAT or FAT. Embedding the cmdline in the signed
   wrap means tampering with p2 cannot inject kernel arguments into a
   blessed boot; the kernel + cmdline verify or the boot refuses. (An
   initrd read off p2 is unverified; Section 7.5.)
@@ -2326,7 +2437,8 @@ rewrites the file without it. Unknown keys are ignored.
 Loader behavior: a menu entry whose path matches a manifest record *and*
 whose current file size equals `size=` is labeled blessed and boots the
 named image (served to LoadImage through the synthetic-filesystem machinery
-of Section 5.1, since exFAT has no firmware device path; shim verifies as
+of Section 5.1, since p2 is read by the loader's own driver, not the
+firmware's; shim verifies as
 always). A size mismatch means the ISO changed after blessing: the entry is
 labeled stale-blessed and boots as if unblessed. The `sha256=` field is
 recorded and nothing compares it: the loader and the appliance's survey
@@ -2369,14 +2481,27 @@ while every real file lives only in UDF.
 
 ## 9. EFI application internals
 
-- **Language/ABI:** freestanding C11, MS x64 ABI, built to PE32+ directly with
-  `x86_64-w64-mingw32-gcc`. No gnu-efi, no EDK2. We carry our own minimal UEFI
-  headers (the protocols and GUIDs we actually use) under
-  `falcon-efi/src/efi/`. mingw emits PE32+ and the MS ABI directly, so
-  gnu-efi's ELF-then-objcopy step and `uefi_call_wrapper` are not needed.
+- **Language/ABI:** freestanding C11, built to PE32+ directly: for x64 by
+  `x86_64-w64-mingw32-gcc` (the MS x64 ABI, UEFI's on x86-64), for AArch64
+  by llvm-mingw's `aarch64-w64-mingw32-clang` (AAPCS64, UEFI's there).
+  No gnu-efi, no EDK2. We carry our own minimal UEFI headers (the protocols
+  and GUIDs we actually use) under `falcon-efi/src/efi/`. mingw emits PE32+
+  and the firmware's ABI directly, so gnu-efi's ELF-then-objcopy step and
+  `uefi_call_wrapper` are not needed.
+- **Two architectures, one source.** Every UEFI app links once per
+  architecture from the same source list: `<image>.efi` for x64,
+  `<image>-aa64.efi` for AArch64 (`make aa64`). A source with an x86-only
+  body keeps it behind `__x86_64__` and has an AArch64 one beside it (the
+  counter, the task switch, the RNG instruction, the idle halt); the x86
+  SIMD block functions (AES-NI, argon2's SSE2, SSSE3 and AVX2) are left out
+  of the AArch64 link, and their callers reach them only behind the same
+  guard, so AArch64 runs the portable paths. `efi/arch.h` spells the
+  architecture's part of a UEFI file name: `BOOTX64.EFI` and `shimx64.efi`,
+  or `BOOTAA64.EFI` and `shimaa64.efi`.
 - **Build:** Makefile-based. Full strict warning set per repo C standard, adapted
   for freestanding (`-ffreestanding -fno-stack-protector` where the environment
-  forces it, `-mno-red-zone`, `-fshort-wchar`). Build variants under `build/`.
+  forces it, `-mno-red-zone` on x64, `-fshort-wchar`). Build variants under
+  `build/`; AArch64's objects under `build/obj/efi-aa64-<variant>/`.
 - **SBAT:** shim refuses second-stage binaries without a valid `.sbat`
   section (shim 16.1; the refusal is the same opaque
   `EFI_SECURITY_VIOLATION` a bad signature gives). Our loader carries one.
@@ -2434,7 +2559,8 @@ while every real file lives only in UDF.
   the shared byte-read callback, registered in a static table (one adapter
   file per driver, `fs_<driver>.c`, and a table a build picks:
   `fs_reg_all.c` on the stick, `fs_reg_ext4.c` in the UEFI station,
-  `fs_reg_station.c` (ext4 and FAT) in the BIOS one, Section 12.1). `extents` is
+  `fs_reg_station.c` (ext4 and FAT) in the BIOS one, Section 12.1;
+  `fs_reg_library.c`, exFAT and FAT, in the extent map's readers). `extents` is
   an **optional capability**: the injection framework needs file-to-LBA
   resolution on p2, and a driver that cannot provide it (btrfs CoW and
   compression can make "the file's raw LBAs" not exist) still serves the
@@ -2442,8 +2568,9 @@ while every real file lives only in UDF.
   hint first, probe order second), never by naming a driver directly, so a
   new filesystem is one driver plus one registry row.
   The drivers are exFAT, ext4 (with `jbd2.c`), FAT12/16/32, ISO9660 (Rock
-  Ridge, Joliet) and UDF; xfs and btrfs are not implemented. FAT32 on p2
-  cannot hold >4 GB ISOs. A new driver's checklist: EFI-free over the byte-read
+  Ridge, Joliet), UDF, btrfs and xfs. The FAT driver
+  also reads a FAT32 library or shelf (Section 3); a FAT32 p2 cannot hold
+  an ISO of 4 GiB or more. A new driver's checklist: EFI-free over the byte-read
   callback, host-testable, constrained feature set matched to what its
   mkfs actually emits (the ext4 driver's approach), cmocka suite with a
   fixture image, and zero warnings under the repo flag set.
@@ -2478,7 +2605,9 @@ while every real file lives only in UDF.
     `serial.c` writes diagnostics, and the screens' transcript, to the first
     serial port.
   - `tsc` - the time-stamp counter, its rate, the wait on the keyboard and
-    the APERF/MPERF read behind the effective clock (Section 5.5);
+    the APERF/MPERF read behind the effective clock (Section 5.5). On
+    AArch64 the counter is the generic timer's `CNTVCT_EL0` at
+    `CNTFRQ_EL0`'s rate, and there is no effective clock;
     `tsccore.c` is the host-tested arithmetic. `tcg` seeds
     its RNG from the counter.
   - `task` - one coroutine on its own stack beside the main flow, which the
@@ -2491,7 +2620,13 @@ while every real file lives only in UDF.
     `exfat.c` (file read + directory enumeration + extent map), `ext4.c`
     (constrained mkfs feature set at install) with `jbd2.c`, its journal
     replayed in memory for a shelf an OS left mounted (Section 5.4),
-    `fat.c` (FAT12/16/32), `iso9660.c` and `udf.c`; `crc32c.c` is shared.
+    `fat.c` (FAT12/16/32), `iso9660.c`, `udf.c` and `btrfs.c` (one
+    device, SINGLE and DUP chunks, crc32c, the default subvolume; a
+    compressed extent is refused when a read reaches it), `xfs.c` (v5,
+    an internal log, data forks in extents and B+tree form, directories in
+    short form and every block form, read through their data blocks) with
+    `xfslog.c`, its log replayed in memory (Section 5.4);
+    `crc32c.c` is shared.
   - `mem` - `jnlmem.c`, the pages a shelf's journal table lives in (Section
     5.4), shared by `pos` and `discover`.
   - `luks` (core) - LUKS2 header parse, argon2id and pbkdf2 keyslots (the
@@ -2621,8 +2756,8 @@ The three-letter names are the route codes the loaders draw on screen
 | LBA 1-33 | GPT header and 128-entry array | both loaders, falcon-hook, the appliance |
 | LBA 34 on | BIOS stage 2, its real length (at most 62 sectors); inside the `FALCON-BIOS` EF02 partition when the installer made one | stage 1 |
 | p1 `FALCON-ESP` | FAT32 ESP: shim as `EFI\BOOT\BOOTX64.EFI`, MokManager, falcon-boot as `grubx64.efi`, `falcon-boot.cer`; the `boot` record at byte 0x1DC of its boot sector; in its reserved sectors the BIOS next-boot marker (sector 8) and BIOS stage 3 (from sector 32) | UEFI firmware, shim; stage 2 (`load3.c`) and `marker.c` |
-| p2 `FALCON-ISO` | exFAT: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
-| p3 | LUKS2 + ext4: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
+| p2 `FALCON-ISO` | exFAT or FAT32: the media, `falcon/blessed/`, the manifest, `falcon/windows.cfg`; `/.falcon`, the `library` record | both loaders, falcon-hook (as raw extents), winjump, the appliance |
+| p3 | LUKS2 + ext4, FAT32, btrfs or xfs: UKIs in `/uki`, the MOK key pair; the `falcon` token, the `shelf` record | both loaders, the appliance |
 | p4 | LUKS2: the personal OS's LVM (root, home) | the personal OS's initramfs |
 
 Stages 1 and 2 live in front of p1 and stage 3 inside it, so installing
@@ -2769,7 +2904,7 @@ sequenceDiagram
     L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more StartupAllAPs puts the other cores on the lane pool (mp/)
     L->>FC: luks_unlock p3 (argon2id or PBKDF2, AES-XTS)
     L->>L: the workers released and seen back, the AVX state given back, on every core
-    L->>FC: luks_dev_open, fs_mount_journal ext4 (a journal left by a hibernated OS replayed in memory, 5.4)
+    L->>FC: luks_dev_open, fs_mount_journal on the shelf's filesystem (an ext4 journal left by a hibernated OS replayed in memory, 5.4)
     FC-->>L: /uki/*.efi, else /EFI/Linux/*.efi
     L->>U: chooser (skipped for one image)
     L->>L: read the UKI into pages
@@ -2785,8 +2920,8 @@ sequenceDiagram
     Note over I: root /dev/mapper/vgusb-root mounted, switch-root
 ```
 
-The OS half (the drop-in, the cmdline naming p4 and root) is the archusb
-repository's; Section 5 says why the drop-in exists.
+The OS half (the drop-in, the cmdline naming p4 and root) is the OS's own
+(`docs/personal-os.md`); Section 5 says why the drop-in exists.
 
 Resident at handoff: credfs and sd-stub's LoadFile2, both boot-services.
 The other processors are back with the firmware before the shelf is
@@ -2812,9 +2947,9 @@ sequenceDiagram
     L->>S: LoadImage by path (MOK-signed), StartImage
     S->>A: sd-stub, kernel, /init = falcon-boot-appliance-init
     A->>A: modules, then the install ID from falcon.ident.cred (none: refuse, unlock nothing)
-    A->>A: find_stick (30 s): the exFAT /.falcon and the LUKS2 token carrying it, any disk, then mount p2 and read the manifest
+    A->>A: find_stick (30 s): the library's /.falcon and the LUKS2 token carrying it, any disk, then mount p2 (exfat, else vfat) and read the manifest
     A->>A: survey only the listed paths
-    A->>A: shelf_open p3 read-only in process (core LUKS2, ext4) with the passphrase .cred
+    A->>A: shelf_open p3 read-only in process (core LUKS2 and fs) with the passphrase .cred
     A->>A: MOK key and cert into sealed memfds
     A->>A: falcon-boot-sign-static per ISO: /falcon/blessed/, manifest
     A->>F: reboot
@@ -2882,7 +3017,7 @@ sequenceDiagram
     participant B as FreeBSD loader
     participant K as FreeBSD kernel
     L->>L: bsd_run: directory record, loader.conf settings, staging check
-    L->>F: virtual CD with the two overrides, ConnectController
+    L->>F: virtual CD with the two overrides and the window, ConnectController
     L->>L: read the signed loader from /falcon/blessed/
     L->>F: LoadImage, FilePath = the medium's EFI\BOOT\BOOTX64.EFI, SourceBuffer = the signed copy
     F-->>L: verified against MokList, DeviceHandle = the medium
@@ -3026,11 +3161,11 @@ sequenceDiagram
     participant B as FreeBSD loader
     participant K as FreeBSD kernel
     L->>FC: mount ISO9660, /boot/defaults/loader.conf (one extent, 1 KiB or more)
-    L->>FC: bsdmd_record: a FALCONBS.IMG record in free bytes of / or /boot, extent 0, length = the ISO
-    L->>L: staging check: ISO + 192 MiB below 4 GiB
+    L->>FC: bsdmd_record: a FALCONBS.IMG record in free bytes of / or /boot, its extent a window past the ISO's end, length = the ISO
+    L->>L: staging check: ISO + 192 MiB below 4 GiB (2^48 on AArch64)
     L->>FC: bsdmd_config over the file's opening comment block
     Note right of FC: md_image_load, md_image_type, md_image_name,<br/>vfs.root.mountfrom=cd9660:/dev/md0
-    L->>F: virtual CD with the two overrides, ConnectController
+    L->>F: virtual CD with the two overrides and the window (the ISO again), ConnectController
     L->>F: chainload loader.efi (SHIM_LOCK hidden)
     F->>B: start
     B->>B: currdev cd0, reads the edited loader.conf
@@ -3038,6 +3173,14 @@ sequenceDiagram
     B->>K: md image preloaded
     Note over K: root cd9660 from /dev/md0
 ```
+
+The window: FreeBSD's loader zeroes a file's block cache (libsa
+`cd9660.c`), so a file at sector 0 has its first block taken as cached and
+copied from a NULL buffer. On x86-64 that reads page 0; AAVMF maps no page
+there and the loader faults. FALCONBS.IMG's bytes are therefore the virtual
+CD's appended region, which serves the ISO a second time; falcon-bios keeps
+sector 0, where the false hit reads the interrupt table and the system area
+it stands for is never read.
 
 `loader.efi` is unsigned, so Secure Boot refuses this route; BLB is the
 Secure Boot route. The file edited is `/boot/defaults/loader.conf`; a medium
@@ -3072,7 +3215,7 @@ sequenceDiagram
 ```
 
 Microsoft's binaries are served byte for byte; the patched WIM is not
-verified (Section 7.7). WinPE sees p2 through its own `exfat.sys`, which is
+verified (Section 7.7). WinPE sees p2 through its own `exfat.sys` (or `fastfat.sys`), which is
 how winjump finds the file. Every winjump failure still starts the original
 shell, logged to `X:\falcon-winjump.log`.
 
@@ -3084,8 +3227,9 @@ sequenceDiagram
     participant F as Firmware
     participant S as shim
     participant P as the medium's loader
-    L->>F: virtual CD (2048) or disk (512, .img), ConnectController
-    F-->>L: volumes: El Torito boot image, or the image's ESP
+    L->>F: virtual CD (2048), or disk (512): a .img, or an isohybrid .iso under U-Boot
+    L->>F: ConnectController
+    F-->>L: volumes: El Torito boot image, or the ESP by the partition table
     L->>L: select_boot_volume: the one with EFI\BOOT\BOOTX64.EFI
     L->>S: LoadImage by device path
     L->>L: hide SHIM_LOCK
@@ -3186,7 +3330,7 @@ flowchart TD
     IR --> MK["marker_take: the boot partition's marker sector<br/>a marker is zeroed, read back, then parsed and dated (6.3.1)"]
     MK --> DSK["install_drives: the boot drive, then every drive<br/>the BDA counts; each one's table, MBR or GPT"]
     DSK --> REC["install_part_record per partition: a LUKS2 falcon token,<br/>or /.falcon on what the registry mounts;<br/>only the boot record's install ID counts"]
-    REC --> P2["library: fs_mount (exFAT), survey_volume (.iso, .img)"]
+    REC --> P2["library: fs_mount (exFAT or FAT), survey_volume (.iso, .img)"]
     REC --> P3["shelf: pos_probe, LUKS2 or plaintext"]
     P2 --> SI["linux_cpu_is_64, once: {64-BIT ONLY} is drawn only without it<br/>display_init: 80x25 text, VGA memory"]
     P3 --> SI
@@ -3323,7 +3467,7 @@ flowchart TD
     ROW{"row, key"}
     ROW -- "Personal OS" --> POS[POS]
     ROW -- "Escape at the root" --> FW["INT 18h"]
-    ROW -- "image, Enter / c / d" --> TAG{"{EFI ONLY}, or<br/>{64-BIT ONLY} here?"}
+    ROW -- "image, Enter / c / d" --> TAG{"{ARM64 ONLY}, {EFI ONLY},<br/>or {64-BIT ONLY} here?"}
     TAG -- yes --> TP["page: what it needs, what to do"]
     TAG -- "no, c" --> CHN[CHN]
     TAG -- "no, Enter or d" --> MED["scan_family<br/>medium_open, family_detect"]
@@ -3337,8 +3481,8 @@ flowchart TD
     DIR -- "no CD boot entry, or not a Linux kernel it can start" --> CHN
 ```
 
-The rows carry `{EFI ONLY}` and, on a processor without long mode, `{64-BIT
-ONLY}` (7.8), filled by `probe_entry` (`scan_probe`, then
+The rows carry `{EFI ONLY}` or `{ARM64 ONLY}` and, on a processor without
+long mode, `{64-BIT ONLY}` (7.8), filled by `probe_entry` (`scan_probe`, then
 `biosboot_medium`) as the menu first draws each row. `boot_plain` reads the
 same answer first on every key: a tagged row takes no route, its page says
 what the medium needs and the menu comes back.
@@ -3401,7 +3545,7 @@ sequenceDiagram
         L->>L: borrow the AVX state, and for a slot of 512 MiB-passes or more the MADT's other cores, woken by INIT and two startup IPIs into 0x5000 (mp/aptramp.S), join the lane pool
         L->>FC: luks_unlock p3
         L->>L: the workers released and halted, each sent INIT, the local APIC's SVR as found, the AVX state given back
-        L->>FC: luks_dev_open, fs_mount_journal ext4 (5.4)
+        L->>FC: luks_dev_open, fs_mount_journal (5.4)
     else plaintext shelf
         L->>FC: fs_mount_journal straight off the partition, no prompt and no credential
     end
@@ -3603,7 +3747,7 @@ sequenceDiagram
     H->>H: the init to exec: falcon.init=, else /init
     H->>H: map: /falcon/map, else /.extra/credentials/falcon-map.cred, else FalconIsoMap in efivarfs
     H->>KN: the initramfs's own modprobe: dm_mod, storage and USB drivers, loop, isofs
-    H->>KN: poll /sys/block (30 s) for the disk of the map's block size whose exFAT volume at the map's LBA has a /.falcon record carrying the map's install ID (extfind)
+    H->>KN: poll /sys/block (30 s) for the disk of the map's block size whose volume at the map's LBA (exFAT or FAT) has a /.falcon record carrying the map's install ID (extfind)
     H->>KN: the partition device: /sys/block/DISK/PART/start at that LBA (else the whole disk at an offset)
     alt device-mapper
         H->>KN: dm-linear, one read-only target per extent: /dev/mapper/falcon-iso
@@ -3946,6 +4090,13 @@ path) the firmware starts the same file, so the station has one route in
 and one measured chain (12.15). The loader stays in one place. Another
 system's `BOOTX64.EFI` (Windows', systemd-boot's, a distribution's shim)
 is saved beside the install's backup and replaced; `remove` puts it back.
+
+**AArch64.** The same station, built for that machine (Section 9): the
+loader as `falconaa64.efi`, the jumper as `\EFI\BOOT\BOOTAA64.EFI`, shim as
+`shimaa64.efi`, and the `falcon` entry naming whichever starts it. An
+AArch64 station is UEFI only. The installer, `update` and `remove` take the
+station's architecture from `--arch` or the host's own, since an image may
+be made on one machine for another.
 The jumper is told from it by its `.sbat` component (Section 9). An
 install with shim has neither the jumper nor an entry naming it: the
 entry names shim, and the MOK is not in such a machine's db. A station
@@ -4179,7 +4330,9 @@ staged and moved when it is fixed at 1 MB: the row `memtest`, route
 with the MOK by the installer (12.9) as the POS hook signs UKIs, so it boots
 in every Secure Boot state, and loaded as 12.4's `bootmgfw.efi` is, from
 `\EFI\falcon\memtest.efi` on the loader's own ESP (route `MEM`). Its row
-appears only when the file is there.
+appears only when the file is there. memtest86+ has no AArch64 build; an
+AArch64 station's `memtest.efi` is PassMark's MemTest86, and its row says
+so.
 
 ### 12.7 STATION.INI
 
@@ -4803,7 +4956,8 @@ wrapping an NV_ReadValue the TPM answers only when the PCRs match
 
 The session's randomness (the nonces, the ECDH scalar, the transport
 secret) is SHA-256 over every source the machine has: `EFI_RNG_PROTOCOL`,
-RDRAND, the TPM's GetRandom, the time-stamp counter and the clock. The
+RDRAND (RNDR on AArch64), the TPM's GetRandom, the time-stamp counter and
+the clock. The
 TPM's own bytes cross the same bus as the seed, so they are never used
 alone.
 

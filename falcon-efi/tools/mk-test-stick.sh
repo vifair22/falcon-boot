@@ -13,7 +13,7 @@
 #                             reserved sectors
 #   p2  ISOs  exFAT   64 MiB  two fake ISOs, plus the real payload ISO if built,
 #                             and /.falcon (role library)
-#   p3  UKI   LUKS2   64 MiB  argon2id keyslot at the stick's fixed cost and a
+#   p3  UKI   LUKS2   96 MiB  argon2id keyslot at the stick's fixed cost and a
 #                             falcon token (role shelf),
 #                             ext4 inside, /uki/*.efi
 #   p4  root  LUKS2   32 MiB  argon2id keyslot, deliberately empty
@@ -82,7 +82,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 IMG=${TEST_STICK_IMG:-build/test-stick.img}
-SIZE_MIB=256
+SIZE_MIB=288
 PASS="${FALCON_TEST_PASS:-falcon-test}"
 
 # The stick's argon2id cost, from the one place it is written.
@@ -102,6 +102,9 @@ SHIM_EFI="$SHIM_BINS/fedora-16.1-shimx64.efi"
 MM_EFI="$SHIM_BINS/fedora-16.1-mmx64.efi"
 EFI_PLAIN=build/bin/falcon-boot.efi
 EFI_SIGNED=build/bin/falcon-boot-signed.efi
+SHIM_AA64="$SHIM_BINS/fedora-16.1-shimaa64.efi"
+MM_AA64="$SHIM_BINS/fedora-16.1-mmaa64.efi"
+EFI_AA64_SIGNED=build/bin/falcon-boot-aa64-signed.efi
 MOK_KEY=build/mok-test/falcon-test-mok.key
 MOK_CRT=build/mok-test/falcon-test-mok.crt
 MOK_CER=build/mok-test/falcon-test-mok.cer
@@ -223,7 +226,7 @@ sgdisk \
     -n 1:1MiB:+64MiB   -t 1:ef00 -c 1:"FALCON-ESP" \
     -n 2:0:+64MiB      -t 2:EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 \
                        -c 2:"FALCON-ISO" \
-    -n 3:0:+64MiB      -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF \
+    -n 3:0:+96MiB      -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF \
                        -c 3:"FALCON-UKI" \
     -n 4:0:+32MiB      -t 4:8309 -c 4:"FALCON-ROOT" \
     "$IMG" >/dev/null
@@ -280,6 +283,20 @@ else
     # private key does not travel; it is not on this partition and never is.
     [[ -f "$MOK_CER" ]] && cp "$MOK_CER" "$MNT/falcon-boot.cer"
     echo "   shim -> mmx64.efi -> grubx64.efi (our signed loader)"
+fi
+# AArch64 beside it: the removable-media names differ, so one p1 boots
+# either machine. Without Fedora's shimaa64 the loader is BOOTAA64.EFI
+# itself, which boots with Secure Boot off only.
+if [[ -f "$EFI_AA64_SIGNED" ]]; then
+    if [[ "$UNSIGNED" -eq 0 && -f "$SHIM_AA64" && -f "$MM_AA64" ]]; then
+        cp "$SHIM_AA64" "$MNT/EFI/BOOT/BOOTAA64.EFI"
+        cp "$MM_AA64" "$MNT/EFI/BOOT/mmaa64.efi"
+        cp "$EFI_AA64_SIGNED" "$MNT/EFI/BOOT/grubaa64.efi"
+        echo "   shimaa64 -> mmaa64.efi -> grubaa64.efi (our signed loader)"
+    else
+        cp "$EFI_AA64_SIGNED" "$MNT/EFI/BOOT/BOOTAA64.EFI"
+        echo "   AArch64 loader staged directly as BOOTAA64.EFI (no shim)"
+    fi
 fi
 unmount_rw
 
@@ -352,6 +369,14 @@ else
 fi
 cp "$UKI_SRC" "$MNT/uki/unsigned.efi"
 echo "   /uki populated from the $UKI_KIND"
+# The AArch64 personal OS beside it, signed the same way. Each machine's
+# chooser lists only its own architecture's images, so the x86-64 cases see
+# the shelf they always did.
+FIXTURE_UKI_AA64_SIGNED=build/test/fixture-uki-aa64-signed.efi
+if [[ "$UNSIGNED" -eq 0 && -f "$FIXTURE_UKI_AA64_SIGNED" ]]; then
+    cp "$FIXTURE_UKI_AA64_SIGNED" "$MNT/uki/personal-aa64.efi"
+    echo "   /uki/personal-aa64.efi from the AArch64 fixture UKI"
+fi
 
 # The label fixtures (falcon-efi/tools/mk-test-labels.sh). personal.efi and
 # unsigned.efi test what the loader LOADS; these test what it CALLS things,

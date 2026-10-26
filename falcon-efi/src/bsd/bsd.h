@@ -16,8 +16,9 @@
  * ranges served through the overlay (iso/overlay.h), so nothing on p2 is
  * written and no ISO9660 length changes.
  *
- * The cost is RAM: the image is copied into memory below 4 GB, and FreeBSD's
- * loader gives up with "Unable to expand staging area" when it will not fit.
+ * The cost is RAM: the image is copied into memory (below 4 GB on x86-64),
+ * and FreeBSD's loader gives up with "Unable to expand staging area" when it
+ * will not fit.
  * bsd_boot checks that the memory is there before it serves anything, and
  * says so plainly when it is not, rather than letting the boot die halfway
  * through the copy with a message only FreeBSD's source explains.

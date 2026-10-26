@@ -210,7 +210,7 @@ static BOOL jwjoin(wchar_t *dst, size_t cap, const wchar_t *a,
  * (mainCRTStartup is built without the protector), and a broken canary ends
  * the process at once: whatever overwrote the stack is not something to go
  * on running with. */
-#if defined(__x86_64__)
+#if defined(_WIN64)
 unsigned long long __stack_chk_guard = 0x2d5f3a1c9e7b4d60ull;
 #else
 unsigned long __stack_chk_guard = 0x9e7b4d60ul;
@@ -267,8 +267,14 @@ struct stick_opts {
  * file uses, and every one is a conversion wvsprintf takes; the 64-bit
  * values go through u64s and %s. Its checker is ms_printf. wvsprintfA caps at
  * 1024 bytes, which is why line is that size and every argument is a path or
- * a number. */
-static void __attribute__((format(ms_printf, 1, 2)))
+ * a number. Clang has no ms_printf; its printf checker accepts the same
+ * conversions. */
+#if defined(__clang__)
+#define JLOG_FORMAT printf
+#else
+#define JLOG_FORMAT ms_printf
+#endif
+static void __attribute__((format(JLOG_FORMAT, 1, 2)))
 jlog(const char *fmt, ...)
 {
     char line[1024 + 2];
@@ -948,6 +954,10 @@ static BOOL mount_via_driver(const struct cfg *cfg)
     DWORD ret = 0;
     BOOL ok = FALSE;
 
+    if (falcon_vdisk_bin_len == 0) {
+        jlog("driver: this build carries no falcon-vdisk");
+        return FALSE;
+    }
     if (cfg->map == NULL) {
         jlog("driver: the loader left no extent map (an older loader?)");
         return FALSE;
@@ -977,7 +987,8 @@ static BOOL mount_via_driver(const struct cfg *cfg)
         CloseHandle(ctl);
         return FALSE;
     }
-    b = (struct falcon_vdisk_backing *)msg;
+    /* HeapAlloc's block is aligned for any type. */
+    b = (struct falcon_vdisk_backing *)(void *)msg;
     b->iso_bytes = hdr.iso_size;
     b->path_bytes = (unsigned short)path_bytes;
     b->reserved = 0;

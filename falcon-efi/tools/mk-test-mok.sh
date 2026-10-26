@@ -127,6 +127,26 @@ cp -f "$VARS" "$VARS_SB"
 chmod u+w "$VARS_SB"
 "$VFV" --inplace "$VARS_SB" --set-json "$MOKSB_JSON"
 
+# The same two for AArch64, under AAVMF. From the blank varstore always:
+# Debian's AAVMF_VARS.ms.fd trusts the Microsoft UEFI CA 2011 alone, and
+# Fedora's shimaa64 is signed by the 2023 CA alone, so on that varstore
+# shim itself is refused. --enroll-microsoft enrolls both.
+AA64_BLANK=$(aavmf_find VARS plain || true)
+if [[ -n $AA64_BLANK ]]; then
+    AA64_VARS=$OUT/AAVMF_VARS.secboot.mok.fd
+    AA64_VARS_SB=$OUT/AAVMF_VARS.secboot.moksb.fd
+    echo "== seeding the AArch64 varstores"
+    cp -f "$AA64_BLANK" "$AA64_VARS"
+    chmod u+w "$AA64_VARS"
+    "$VFV" --inplace "$AA64_VARS" --enroll-microsoft --secure-boot >/dev/null
+    "$VFV" --inplace "$AA64_VARS" --add-mok "$MOK_OWNER" "$CRT"
+    cp -f "$AA64_VARS" "$AA64_VARS_SB"
+    chmod u+w "$AA64_VARS_SB"
+    "$VFV" --inplace "$AA64_VARS_SB" --set-json "$MOKSB_JSON"
+else
+    echo "== no AAVMF varstore found; the AArch64 Secure Boot rigs are skipped"
+fi
+
 echo "== ready:"
 ls -la "$OUT"
 echo

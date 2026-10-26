@@ -4,6 +4,22 @@
 # falcon-bios/tools/run-jump-rig.sh. UEFI is OVMF (ovmf.sh finds it), BIOS
 # is QEMU's SeaBIOS.
 #
+#   chain-uefi-aa64
+#                  the rig stick under AAVMF: a-efi-stub.iso, whose kernel
+#                  is an x86-64 EFI stub, is tagged {X64 ONLY}, and c on
+#                  payload-test.iso runs its BOOTAA64.EFI
+#   uefi-stick-aa64, uefi-stick-aa64-sb
+#                  the same under AAVMF on qemu-system-aarch64's virt
+#                  machine, Secure Boot off and on: the AArch64 loader
+#                  through shimaa64, and the arm64 fixture UKI the shelf
+#                  offers it (personal-aa64.efi), whose kernel came up on
+#                  ACPI. Emulated on an x86-64 host, so every wait is
+#                  AA64_SCALE (6) times as long
+#   uefi-stick-aa64-uboot, chain-uefi-aa64-uboot
+#                  uefi-stick-aa64 and chain-uefi-aa64 under U-Boot's UEFI
+#                  (UBOOT_BIN), a devicetree machine: the fixture UKI's
+#                  kernel came up on the devicetree U-Boot was given, and
+#                  the virtual CD binds under U-Boot's block driver
 #   uefi-stick     the rig stick (mk-test-stick.sh) as the only disk under
 #                  OVMF, Secure Boot off: the menu lists its library, the
 #                  personal OS unlocks (p3 is argon2id at the stick's cost),
@@ -110,6 +126,30 @@
 #                  ignored the journal would find personal.efi, one before
 #                  this did not boot at all), and falcon-bios says on serial
 #                  that it read the shelf through its journal
+#   fs-p3-fat-uefi, fs-p3-fat-bios
+#                  a stick `mkstick create --p3-fs fat32` made: judged as
+#                  uefi-stick, the shelf inside p3's LUKS2 read by the FAT
+#                  driver
+#   fs-p2-fat-uefi, fs-p2-fat-bios
+#                  the same for `--p2-fs fat32`: the library listed off a
+#                  FAT32 p2
+#   fs-p3-btrfs-uefi, fs-p3-btrfs-bios
+#                  the same for `--p3-fs btrfs`: the shelf read by the
+#                  btrfs driver
+#   fs-p3-xfs-uefi, fs-p3-xfs-bios
+#                  the same for `--p3-fs xfs`, its 320 MiB p3
+#   fs-p3-xfs-dirty-uefi, fs-p3-xfs-dirty-bios
+#                  that stick with its UKI renamed to resumed.efi, fsynced,
+#                  and the filesystem shut down with nothing written back:
+#                  the loader replays the log and boots resumed.efi
+#   fs-p2-fat-iso-uefi
+#                  that stick under OVMF: payload-test.iso, a file on the
+#                  FAT32 library, boots through the virtual CD
+#   arm64-only-bios
+#                  the same stick under SeaBIOS: an ISO whose only UEFI
+#                  loader is BOOTAA64.EFI is listed with {ARM64 ONLY}, not
+#                  {EFI ONLY} (an x86-64 PC's UEFI could not start it
+#                  either), and choosing it shows its page
 #   64-only-bios32 the same stick under SeaBIOS on an i686 (no long
 #                  mode): an ISO whose every kernel is 64-bit is listed with
 #                  {64-BIT ONLY}, a multi-arch one (a 64-bit and a 32-bit
@@ -257,6 +297,7 @@ STUB_ISO=a-efi-stub.iso
 EFI_ONLY_ISO=b-efi-only.iso
 X64_ISO=b-64-only.iso
 MULTI_ISO=b-multi.iso
+ARM64_ISO=b-arm64.iso
 # The validation-off stick's second copy of the payload ISO, under a name no
 # bless record claims, so one row boots the ordinary way beside the stale
 # one; and an ISO with an unsigned \EFI\BOOT\BOOTX64.EFI in its tree, the
@@ -268,7 +309,7 @@ TREE_ISO=unsigned-tree.iso
 
 build_sticks() {
     STICK_ID=$ID_A TEST_STICK_IMG=$R/stick-a.img \
-        STICK_ISO_FILES="build/test-uefi-biosonly.iso:$BIOS_ONLY_ISO build/test-uefi-stub.iso:$STUB_ISO build/test-bios-efionly.iso:$EFI_ONLY_ISO build/test-bios-64.iso:$X64_ISO build/test-bios-multi.iso:$MULTI_ISO" \
+        STICK_ISO_FILES="build/test-uefi-biosonly.iso:$BIOS_ONLY_ISO build/test-uefi-stub.iso:$STUB_ISO build/test-bios-efionly.iso:$EFI_ONLY_ISO build/test-bios-64.iso:$X64_ISO build/test-bios-multi.iso:$MULTI_ISO build/test-bios-arm64.iso:$ARM64_ISO" \
         falcon-efi/tools/mk-test-stick.sh --no-labels >"$R/stick-a.build" 2>&1
     STICK_ID=$ID_B TEST_STICK_IMG=$R/stick-b.img FALCON_TEST_PASS=$PASS_B \
         STICK_ISOS="second-stick.iso" \
@@ -291,6 +332,86 @@ build_sticks() {
         falcon-efi/tools/mk-test-stick.sh --no-labels >>"$R/stick-voff.build" 2>&1
     STICK_IMG=$R/stick-voff.img falcon-efi/tools/mk-test-blessed-stick.sh \
         >>"$R/stick-voff.build" 2>&1
+}
+
+# A stick of one filesystem choice, made by `mkstick create --p2-fs
+# --p3-fs` (and `mkstick bios`) the first time a case asks for it:
+# $R/stick-NAME.img, its library holding NAME.iso, its install ID in
+# $R/stick-NAME.id. 1 GiB, so p3 has the 320 MiB xfs asks for.
+fs_stick() {    # fs_stick NAME P2_FS P3_FS
+    local img=$R/stick-$1.img log=$R/stick-$1.build p2
+    [[ -f "$img" && "${FS_BUILT[$1]:-}${KEEP:-0}" == *1* ]] && return 0
+    rm -f "$img"
+    truncate -s 1G "$img"
+    ( umask 077; printf '%s' "$PASS" > "$R/pass" )
+    attach "$img"
+    # shellcheck disable=SC2024  # the log is ours, not root's
+    sudo "$MKSTICK" --quiet create "$LOOP" --force \
+        --p1-size 300M --iso-size 128M --p3-size 320M --p4-size rest \
+        --p2-fs "$2" --p3-fs "$3" \
+        --passphrase-file "$R/pass" --shim build/shim/bins \
+        --loader build/bin/falcon-boot.efi --uki build/test/fixture-uki.efi \
+        --cn "falcon-boot $1 rig" >"$log" 2>&1 || { rm -f "$R/pass"; detach; return 1; }
+    rm -f "$R/pass"
+    p2=$(sudo "$MKSTICK" ident "$LOOP" | awk -F '\t' '$2 == "library" { print $1 }')
+    [[ -n "$p2" ]] || { detach; return 1; }
+    mount_part "${LOOP}p$p2"
+    dd if=/dev/zero of="$MNT/$1.iso" bs=1M count=1 status=none
+    cp build/test-payload.iso "$MNT/payload-test.iso"
+    umount_part
+    # shellcheck disable=SC2024
+    sudo "$MKSTICK" --quiet bios --reserve --no-backup \
+        --stage1 build/bin/falcon-bios-stage1.bin \
+        --stage2 build/bin/falcon-bios-stage2.bin \
+        --stage3 build/bin/falcon-bios-stage3.bin "$LOOP" >>"$log" 2>&1 ||
+        { detach; return 1; }
+    sudo "$MKSTICK" ident "$LOOP" |
+        awk -F '\t' '$2 == "boot" { print $3 }' > "$R/stick-$1.id"
+    detach
+    FS_BUILT[$1]=1
+}
+declare -A FS_BUILT=()
+
+# fs_case CASE FIRMWARE NAME P2_FS P3_FS: stick_case on that stick.
+fs_case() {
+    if ! fs_stick "$3" "$4" "$5"; then
+        result "$1" 0 "the $3 stick did not build ($R/stick-$3.build)"
+        return
+    fi
+    stick_case "$1" "$2" "$(cat "$R/stick-$3.id")" "$3.iso" "" "" \
+        "$R/stick-$3.img:boot"
+}
+
+# fs_iso CASE NAME P2_FS P3_FS: payload-test.iso off that stick's library,
+# through the virtual CD, under OVMF.
+fs_iso() {
+    local why= row i
+    if ! fs_stick "$2" "$3" "$4"; then
+        result "$1" 0 "the $2 stick did not build ($R/stick-$2.build)"
+        return
+    fi
+    boot uefi "$R/stick-$2.img:boot"
+    wait_for payload-test.iso 90 || why="the menu never listed payload-test.iso"
+    if [[ -z "$why" ]]; then
+        sleep 1
+        row=$(row_of payload-test.iso) || true
+        [[ -n "$row" ]] || why="no row for payload-test.iso"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey ret"
+        wait_for "FALCON-PAYLOAD-OK" 90 || why="the payload never ran"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "payload-test.iso ran its payload off a $3 library"
+    else
+        result "$1" 0 "$why"
+    fi
 }
 
 # MBR: p1 FAT32 (0x0C), p2 exFAT (0x07), p3 extended holding p5 FAT16
@@ -427,7 +548,8 @@ mon() { printf '%s\n' "$*" | socat - "UNIX-CONNECT:$R/mon.sock" >/dev/null 2>&1 
 
 wait_for() {    # wait_for PATTERN SECONDS: 0 once the log has it
     local i
-    for (( i = 0; i < $2 * 10; i++ )); do
+    # SECONDS as KVM takes them; boot scales them for an emulated machine.
+    for (( i = 0; i < $2 * 10 * ${SCALE:-1}; i++ )); do
         log_text "$R/serial.log" | grep -aqF -- "$1" && return 0
         kill -0 "$QPID" 2>/dev/null || { log_text "$R/serial.log" |
             grep -aqF -- "$1"; return; }
@@ -457,16 +579,35 @@ send_keys() {   # send_keys TEXT: one sendkey per character, then Enter
 # one the UEFI loader never sees.
 boot() {
     local fw=$1 d img opts n=0 idx=1 args=() fwargs=() vars code
-    local cpu=${BOOT_CPU:-host}
+    local cpu=${BOOT_CPU:-host} qemu=qemu-system-x86_64 accel=(-enable-kvm)
+    local aa64=0
     shift
+    # AArch64 runs on the virt machine under AAVMF, emulated on an x86-64
+    # host (TCG), so every wait in the case is scaled for it.
+    SCALE=1
+    if [[ $fw == uefi-aa64* ]]; then
+        aa64=1
+        qemu=qemu-system-aarch64
+        if [[ $(uname -m) == aarch64 && -w /dev/kvm ]]; then
+            cpu=host
+        else
+            accel=()
+            cpu=max
+            SCALE=${AA64_SCALE:-6}
+        fi
+    fi
     for d in "$@"; do
         img=${d%%:*}
         opts=":${d#*:}:"
         [[ "$d" == *:* ]] || opts=::
+        # U-Boot keeps its variables in a file on the ESP it booted from,
+        # so its disks are snapshots: no case leaves that file behind.
+        local snap=
+        [[ $fw == uefi-aa64-uboot ]] && snap=,snapshot=on
         if [[ "$opts" == *:slow:* ]]; then
-            args+=(-drive "if=none,id=d$n,format=raw,file=$img,throttling.bps-total=$SLOW_BPS")
+            args+=(-drive "if=none,id=d$n,format=raw,file=$img,throttling.bps-total=$SLOW_BPS$snap")
         else
-            args+=(-drive "if=none,id=d$n,format=raw,file=$img")
+            args+=(-drive "if=none,id=d$n,format=raw,file=$img$snap")
         fi
         local dev
         if [[ "$opts" == *:4k:* ]]; then
@@ -476,6 +617,9 @@ boot() {
             dev="nvme,drive=d$n,serial=falcon4k$n,logical_block_size=4096,physical_block_size=4096"
         elif [[ "$fw" == bios || "$fw" == bios32 ]]; then
             dev="ide-hd,drive=d$n,bus=ide.$(( n / 2 )),unit=$(( n % 2 ))"
+        elif [[ $aa64 == 1 ]]; then
+            # virt has no IDE; AAVMF reads virtio-blk.
+            dev="virtio-blk-pci,drive=d$n"
         else
             dev="ide-hd,drive=d$n,bus=ide.$n"
         fi
@@ -509,14 +653,34 @@ boot() {
                 -drive "if=pflash,format=raw,readonly=on,file=$code"
                 -drive "if=pflash,format=raw,file=$R/vars.fd")
         ;;
+    uefi-aa64|uefi-aa64-sb)
+        if [[ $fw == uefi-aa64 ]]; then
+            code=$(aavmf_find CODE plain)
+            vars=$(aavmf_find VARS plain)
+        else
+            code=$(aavmf_find CODE secboot)
+            vars=build/mok-test/AAVMF_VARS.secboot.mok.fd
+        fi
+        cp "$vars" "$R/vars.fd"
+        chmod u+w "$R/vars.fd"
+        fwargs=(-machine virt
+                -drive "if=pflash,format=$(fw_format "$code"),readonly=on,file=$code"
+                -drive "if=pflash,format=$(fw_format "$vars"),file=$R/vars.fd"
+                -device qemu-xhci -device usb-kbd -device ramfb)
+        ;;
+    uefi-aa64-uboot)
+        fwargs=(-machine virt
+                -bios "${UBOOT_BIN:-/usr/lib/u-boot/qemu_arm64/u-boot.bin}"
+                -device qemu-xhci -device usb-kbd -device ramfb)
+        ;;
     bios) fwargs=(-machine pc) ;;
     # The coverage harness's bios32 column: an i686, no long mode.
     bios32) fwargs=(-machine pc); cpu=pentium3 ;;
     esac
     rm -f "$R/serial.log" "$R/mon.sock"
-    timeout "$TIMEOUT" qemu-system-x86_64 "${fwargs[@]}" -m "$MEM" \
+    timeout "$(( TIMEOUT * SCALE ))" "$qemu" "${fwargs[@]}" -m "$MEM" \
         -smp "${BOOT_SMP:-1}" \
-        -enable-kvm -cpu "$cpu" -display none -net none "${args[@]}" \
+        "${accel[@]}" -cpu "$cpu" -display none -net none "${args[@]}" \
         -serial "file:$R/serial.log" \
         -monitor "unix:$R/mon.sock,server,nowait" >"$R/qemu.log" 2>&1 &
     QPID=$!
@@ -551,14 +715,18 @@ pos_unlock() {
     UNLOCK_S=
     local t0=
     wait_for "unlocking..." 10 && t0=$(date +%s.%N)
-    for (( i = 0; i < 3000; i++ )); do
-        log_text "$R/serial.log" | grep -aq 'personal\.efi\|FALCON-UKI-INIT' && break
+    for (( i = 0; i < 3000 * ${SCALE:-1}; i++ )); do
+        log_text "$R/serial.log" |
+            grep -aq 'personal[-a-z0-9]*\.efi\|FALCON-UKI-INIT' && break
         sleep 0.01
     done
     [[ -n "$t0" ]] && UNLOCK_S=$(awk -v a="$t0" -v b="$(date +%s.%N)" \
         'BEGIN { printf "%.2f", b - a }')
     sleep 1
-    if ! log_text "$R/serial.log" | grep -aq FALCON-UKI-INIT; then
+    # One image for this machine is read straight away; several open the
+    # chooser first.
+    if ! log_text "$R/serial.log" |
+            grep -aq 'FALCON-UKI-INIT\|reading personal[-a-z0-9]*\.efi'; then
         choose_personal || return 1
     fi
     wait_for "FALCON-UKI-DONE" 120 || { POS_WHY="the UKI never reported"; return 1; }
@@ -614,6 +782,16 @@ stick_case() {  # stick_case CASE FIRMWARE ID ISO ABSENT SEEN DISK...
         has "FALCON-CRED-OK" || why="${why:-the passphrase credential is wrong}"
         has "FALCON-CRED-HEAD falcon.ident.cred [falcon 1 boot $id" ||
             why="${why:-falcon.ident.cred missing or not install $id}"
+        # What described the machine reached the kernel: U-Boot's
+        # devicetree, AAVMF's ACPI.
+        case $fw in
+        uefi-aa64-uboot)
+            has "FALCON-UKI-FIRMWARE devicetree" ||
+                why="${why:-the kernel did not come up on the devicetree}" ;;
+        uefi-aa64*)
+            has "FALCON-UKI-FIRMWARE acpi" ||
+                why="${why:-the kernel did not come up on ACPI}" ;;
+        esac
     fi
     if [[ -z "$why" && -n "$absent" ]]; then
         local a
@@ -1073,6 +1251,57 @@ hibernated_disk() {
     [[ "$feat" == *needs_recovery* ]]
 }
 
+# The xfs stick as a crash leaves it: its UKI copied to resumed.efi and the
+# original deleted, fsynced, then shut down with the log forced and
+# nothing written back, so resumed.efi is in the log alone. p3 is the
+# third partition mkstick create makes.
+xfs_dirty_disk() {
+    local img=$R/stick-p3-xfs-dirty.img
+    fs_stick p3-xfs exfat xfs || return 1
+    rm -f "$img"
+    cp --sparse=always "$R/stick-p3-xfs.img" "$img"
+    MAPPER=falcon-core-rig-xfs
+    LOOP=$(sudo losetup -f --show -P "$img")
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p3" "$MAPPER" -
+    MNT=$(mktemp -d)
+    sudo mount "/dev/mapper/$MAPPER" "$MNT"
+    sudo cp "$MNT/uki/fixture-uki.efi" "$MNT/uki/resumed.efi"
+    sudo xfs_io -c fsync "$MNT/uki/resumed.efi"
+    sudo rm "$MNT/uki/fixture-uki.efi"
+    sudo xfs_io -c fsync "$MNT/uki"
+    sudo xfs_io -x -c 'shutdown -f' "$MNT"
+    sudo umount "$MNT"
+    rmdir "$MNT"
+    MNT=
+    sudo cryptsetup close "$MAPPER"
+    MAPPER=
+    sudo losetup -d "$LOOP"
+    LOOP=
+}
+
+case_xfs_dirty() { # case_xfs_dirty CASE FIRMWARE
+    local why= id
+    xfs_dirty_disk || why="the dirty xfs stick did not build"
+    id=$(cat "$R/stick-p3-xfs.id" 2>/dev/null)
+    [[ -z "$why" ]] && boot "$2" "$R/stick-p3-xfs-dirty.img:boot"
+    [[ -z "$why" ]] && { wait_for "p3-xfs.iso" 90 || why="the menu never listed p3-xfs.iso"; }
+    if [[ -z "$why" ]] && ! pos; then why=$POS_WHY; fi
+    [[ -z "$why" ]] && { has "reading resumed.efi" ||
+        why="the loader did not read the UKI the log names"; }
+    [[ -z "$why" ]] && { has "FALCON-CRED-HEAD falcon.ident.cred [falcon 1 boot $id" ||
+        why="falcon.ident.cred missing or not install $id"; }
+    if [[ -z "$why" && "$2" == bios ]]; then
+        has "falcon-bios: the shelf is read through its journal" ||
+            why="stage 3 did not say it read the log"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "the xfs shelf's log replayed: resumed.efi booted"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 case_hibernated() { # case_hibernated CASE FIRMWARE
     local why=
     hibernated_disk || why="the copy's shelf does not need recovery"
@@ -1470,6 +1699,38 @@ case_voff_pos() { # case_voff_pos CASE
     fi
 }
 
+# AArch64's chainload: c on the payload ISO starts its BOOTAA64.EFI, which
+# the x64 one sits beside; and an ISO whose only way in is an x86-64 EFI
+# stub kernel is tagged for that machine.
+case_chain_aa64() { # case_chain_aa64 CASE FIRMWARE
+    local why= row i
+    boot "$2" "$R/stick-a.img:boot"
+    wait_for "payload-test.iso" 90 || why="the menu never listed payload-test.iso"
+    if [[ -z "$why" ]]; then
+        wait_for_re 'a-efi-stub\.iso .*\{X64 ONLY\}' 60 ||
+            why="a-efi-stub.iso is not tagged {X64 ONLY}"
+    fi
+    if [[ -z "$why" ]]; then
+        row=$(row_of "payload-test.iso") || true
+        [[ -n "$row" ]] || why="no row for payload-test.iso"
+    fi
+    if [[ -z "$why" ]]; then
+        for (( i = 0; i < row; i++ )); do
+            mon "sendkey down"
+            sleep 0.2
+        done
+        sleep 0.3
+        mon "sendkey c"
+        wait_for "FALCON-PAYLOAD-OK" 90 || why="the payload never ran"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "{X64 ONLY} on the x86-64 stub ISO; c chainloaded the payload's BOOTAA64.EFI"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 # The unsigned payload ISO, Enter on its row: the payload runs.
 case_voff_iso() { # case_voff_iso CASE
     local why= row i
@@ -1535,14 +1796,20 @@ build_all
 A_ISOS="archlinux-fake.iso"
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
-    CASES=(uefi-stick uefi-stick-sb bios-stick two-sticks-uefi two-sticks-bios
+    CASES=(uefi-stick uefi-stick-sb uefi-stick-aa64 uefi-stick-aa64-sb
+           chain-uefi-aa64 uefi-stick-aa64-uboot chain-uefi-aa64-uboot
+           bios-stick two-sticks-uefi two-sticks-bios
            mbr-disk-uefi mbr-disk-bios foreign-uefi foreign-bios 4kn-uefi
            4kn-bios 4kn-bios-marker station-uefi station-bios
            station-stick-uefi station-stick-bios bios-only-uefi
-           bios-only-uefi-sb efi-only-bios 64-only-bios32
+           bios-only-uefi-sb efi-only-bios arm64-only-bios 64-only-bios32
            validation-off-uefi validation-off-pos-uefi
            validation-off-iso-uefi validation-off-station-uefi
            kdf-memory-uefi kdf-memory-bios hibernated-uefi hibernated-bios
+           fs-p3-fat-uefi fs-p3-fat-bios fs-p2-fat-uefi fs-p2-fat-bios
+           fs-p2-fat-iso-uefi fs-p3-btrfs-uefi fs-p3-btrfs-bios
+           fs-p3-xfs-uefi fs-p3-xfs-bios fs-p3-xfs-dirty-uefi
+           fs-p3-xfs-dirty-bios
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
@@ -1554,6 +1821,14 @@ for c in "${CASES[@]}"; do
     case $c in
     uefi-stick)    stick_case "$c" uefi "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
     uefi-stick-sb) stick_case "$c" uefi-sb "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
+    chain-uefi-aa64) case_chain_aa64 "$c" uefi-aa64 ;;
+    chain-uefi-aa64-uboot) case_chain_aa64 "$c" uefi-aa64-uboot ;;
+    uefi-stick-aa64-uboot)
+        stick_case "$c" uefi-aa64-uboot "$ID_A" "$A_ISOS" "" "" \
+            "$R/stick-a.img:boot" ;;
+    uefi-stick-aa64|uefi-stick-aa64-sb)
+        stick_case "$c" "uefi-aa64${c#uefi-stick-aa64}" "$ID_A" "$A_ISOS" "" "" \
+            "$R/stick-a.img:boot" ;;
     bios-stick)    stick_case "$c" bios "$ID_A" "$A_ISOS" "" "" "$R/stick-a.img:boot" ;;
     two-sticks-uefi|two-sticks-bios)
         stick_case "$c" "${c#two-sticks-}" "$ID_A" "$A_ISOS" "second-stick.iso" \
@@ -1587,6 +1862,17 @@ for c in "${CASES[@]}"; do
     relaunch-uefi-sb) case_relaunch "$c" uefi-sb ;;
     probe-keys-uefi) case_probe_keys "$c" uefi ;;
     probe-keys-bios) case_probe_keys "$c" bios ;;
+    fs-p3-fat-uefi|fs-p3-fat-bios)
+        fs_case "$c" "${c##*-}" p3-fat exfat fat32 ;;
+    fs-p2-fat-uefi|fs-p2-fat-bios)
+        fs_case "$c" "${c##*-}" p2-fat fat32 ext4 ;;
+    fs-p2-fat-iso-uefi) fs_iso "$c" p2-fat fat32 ext4 ;;
+    fs-p3-btrfs-uefi|fs-p3-btrfs-bios)
+        fs_case "$c" "${c##*-}" p3-btrfs exfat btrfs ;;
+    fs-p3-xfs-uefi|fs-p3-xfs-bios)
+        fs_case "$c" "${c##*-}" p3-xfs exfat xfs ;;
+    fs-p3-xfs-dirty-uefi|fs-p3-xfs-dirty-bios)
+        case_xfs_dirty "$c" "${c##*-}" ;;
     hibernated-uefi) case_hibernated "$c" uefi ;;
     hibernated-bios) case_hibernated "$c" bios ;;
     station-uefi)  case_station "$c" uefi ;;
@@ -1598,6 +1884,10 @@ for c in "${CASES[@]}"; do
     efi-only-bios)
         case_bios_tags "$c" bios "$EFI_ONLY_ISO" "{EFI ONLY}" \
             "this image boots only on a UEFI machine" \
+            "$BIOS_ONLY_ISO" "$STUB_ISO" "$X64_ISO" "$MULTI_ISO" ;;
+    arm64-only-bios)
+        case_bios_tags "$c" bios "$ARM64_ISO" "{ARM64 ONLY}" \
+            "this image boots only on an ARM64 (AArch64) machine" \
             "$BIOS_ONLY_ISO" "$STUB_ISO" "$X64_ISO" "$MULTI_ISO" ;;
     64-only-bios32)
         case_bios_tags "$c" bios32 "$X64_ISO" "{64-BIT ONLY}" \

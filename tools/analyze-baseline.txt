@@ -300,8 +300,17 @@ cppcheck	falcon-winjump/src/winjump.c	uninitvar	Uninitialized variable: d
 # still live), so the address never outlives the frame.
 #
 # cppcheck preprocessorErrorDirective in sys.c: cppcheck tries a
-# configuration with neither __x86_64__ nor __i386__ defined and reaches the
-# #error that refuses any other width. The build compiles exactly the two
-# configurations the file supports.
+# configuration with none of __x86_64__, __i386__ and __aarch64__ defined and
+# reaches the #error that refuses any other machine. The build compiles
+# exactly the three configurations the file supports.
 cppcheck	falcon-hook/src/hook.c	autoVariables	Address of local auto-variable assigned to a function parameter.
-cppcheck	falcon-hook/src/sys.c	preprocessorErrorDirective	#error "falcon-hook is built for x86-64 and i686 only"
+cppcheck	falcon-hook/src/sys.c	preprocessorErrorDirective	#error "falcon-hook is built for x86-64, i686 and AArch64 only"
+#
+# cppcheck preprocessorErrorDirective in efi/arch.h, task.c, tcg.c and tsc.c:
+# the same configuration with neither __x86_64__ nor __aarch64__, reaching
+# the #error each keeps for a machine it has no body for. The loader is
+# built for exactly those two (Section 9).
+cppcheck	falcon-efi/src/efi/arch.h	preprocessorErrorDirective	#error "efi/arch.h: no UEFI file names for this architecture"
+cppcheck	falcon-efi/src/task/task.c	preprocessorErrorDirective	#error "task.c: no task switch for this architecture"
+cppcheck	falcon-efi/src/tcg/tcg.c	preprocessorErrorDirective	#error "tcg.c: no instruction RNG for this architecture"
+cppcheck	falcon-efi/src/tsc/tsc.c	preprocessorErrorDirective	#error "tsc.c: no counter for this architecture"

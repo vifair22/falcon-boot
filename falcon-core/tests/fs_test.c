@@ -45,6 +45,8 @@
 #include <fs/iso9660.h>
 #include <fs/udf.h>
 #include <fs/fat.h>
+#include <fs/btrfs.h>
+#include <fs/xfs.h>
 #include <fs/fs.h>
 
 /* The blob sizes are a compile-time contract with every registered driver;
@@ -106,7 +108,7 @@ static void test_fs_registry_lookup(void **state)
 
     (void)state;
 
-    assert_int_equal(fs_driver_count(), 5);
+    assert_int_equal(fs_driver_count(), 7);
     for (i = 0; i < fs_driver_count(); i++)
         assert_non_null(fs_driver_at(i));
     assert_null(fs_driver_at(fs_driver_count()));
@@ -134,7 +136,19 @@ static void test_fs_registry_lookup(void **state)
      * drivers; a lookup for one must never answer with the other. */
     assert_ptr_not_equal(fs_by_name("fat"), &fs_ops_exfat);
 
-    assert_null(fs_by_name("btrfs"));
+    /* The shelf's other filesystems: the same role as ext4, no extent
+     * map, after the media drivers in the table. */
+    assert_ptr_equal(fs_by_name("btrfs"), &fs_ops_btrfs);
+    assert_int_equal(fs_ops_btrfs.role, FS_HINT_SHELF);
+    assert_null(fs_ops_btrfs.extents);
+    assert_non_null(fs_ops_btrfs.mount_journal);
+    assert_ptr_equal(fs_driver_at(5), &fs_ops_btrfs);
+    assert_ptr_equal(fs_by_name("xfs"), &fs_ops_xfs);
+    assert_int_equal(fs_ops_xfs.role, FS_HINT_SHELF);
+    assert_null(fs_ops_xfs.extents);
+    assert_ptr_equal(fs_driver_at(6), &fs_ops_xfs);
+
+    assert_null(fs_by_name("zfs"));
     assert_null(fs_by_name(NULL));
     /* A prefix is not a name: "ext" must not match "ext4". */
     assert_null(fs_by_name("ext"));
@@ -379,6 +393,22 @@ static void test_fs_status_map_sweeps(void **state)
         if (rc != EXT4_ERR_CORRUPT)
             assert_int_not_equal(mapped, FS_ERR_CORRUPT);
     }
+    for (rc = -1; rc >= BTRFS_ERR_NOT_FOUND; rc--) {
+        int mapped = fs_status_from_btrfs(rc);
+
+        assert_true(mapped < 0);
+        if (rc != BTRFS_ERR_CORRUPT)
+            assert_int_not_equal(mapped, FS_ERR_CORRUPT);
+    }
+    assert_int_equal(fs_status_from_btrfs(-99), FS_ERR_CORRUPT);
+    for (rc = -1; rc >= XFS_ERR_NOMEM; rc--) {
+        int mapped = fs_status_from_xfs(rc);
+
+        assert_true(mapped < 0);
+        if (rc != XFS_ERR_CORRUPT)
+            assert_int_not_equal(mapped, FS_ERR_CORRUPT);
+    }
+    assert_int_equal(fs_status_from_xfs(-99), FS_ERR_CORRUPT);
 }
 
 /* ---- name conversion ---- */

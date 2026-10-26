@@ -39,10 +39,16 @@
 #include <unistd.h>
 
 /* Where a removable medium's default loader lives, by the UEFI spec's own
- * rule (3.5.1.1) and the one path the loader's chainload ever asks for. FAT
- * resolves it case-insensitively, which is the same rule the firmware's File
- * Protocol follows, so what is signed here is what the firmware will find. */
-#define PAYLOAD_MEMBER "EFI/BOOT/BOOTX64.EFI"
+ * rule (3.5.1.1) and the one path the loader's chainload ever asks for, for
+ * each machine a stick boots: x86-64 and AArch64 (the 32-bit one is not
+ * touched; DESIGN Section 1). FAT resolves it case-insensitively, which is
+ * the same rule the firmware's File Protocol follows, so what is signed here
+ * is what the firmware will find. */
+static const char *const g_members[] = {
+    "EFI/BOOT/BOOTX64.EFI",
+    "EFI/BOOT/BOOTAA64.EFI"
+};
+#define N_MEMBERS (sizeof g_members / sizeof g_members[0])
 
 /* Volumes inside one image that are looked at. A disk image with more than a
  * handful of partitions is not a payload image; the cap is a bound on this
@@ -270,7 +276,8 @@ int sgn_payload_cert_der(const char *path, uint8_t **out, size_t *out_len)
  * makes reading it a seek rather than a section walk. */
 int sgn_payload_cert_table(const char *path, uint8_t **out, size_t *out_len)
 {
-    uint8_t head[1024];
+    /* PassMark's MemTest86 puts its PE header at 0xE58. */
+    uint8_t head[8192];
     uint8_t *tab;
     FILE *f;
     size_t got;
@@ -902,7 +909,7 @@ static int img_volumes(const char *path, img_vol *out, size_t cap,
 typedef struct {
     img_vol   vol;
     family_id fam;
-    int       has_payload;
+    unsigned  members;      /* bit i: g_members[i] is there */
 } vol_survey;
 
 /* Reads every volume without writing to any of them: which families they look
@@ -926,6 +933,7 @@ static int survey_image(const char *img, const char *work, vol_survey *out,
     for (i = 0; i < n; i++) {
         char member[PATH_MAX];
         fatvol v;
+        size_t k;
 
         rc = fatvol_open(&v, img, vols[i].off, vols[i].len, work, 0);
         if (rc == SGN_ERR_FORMAT)
@@ -935,12 +943,14 @@ static int survey_image(const char *img, const char *work, vol_survey *out,
 
         out[*count].vol = vols[i];
         out[*count].fam = volume_family(v.mnt)->id;
-        out[*count].has_payload = 0;
-        if (snprintf(member, sizeof(member), "%s/" PAYLOAD_MEMBER, v.mnt) <
-                (int)sizeof(member) &&
-            sgn_file_exists(member)) {
-            out[*count].has_payload = 1;
-            (*payloads)++;
+        out[*count].members = 0;
+        for (k = 0; k < N_MEMBERS; k++) {
+            if (snprintf(member, sizeof(member), "%s/%s", v.mnt,
+                         g_members[k]) < (int)sizeof(member) &&
+                sgn_file_exists(member)) {
+                out[*count].members |= 1u << k;
+                (*payloads)++;
+            }
         }
         (*count)++;
         fatvol_close(&v);
@@ -1048,7 +1058,8 @@ static int bless_img(const sgn_payload_opts *o, const uint8_t *der,
     }
     if (payloads == 0) {
         sgn_set_error(SGN_ERR_FORMAT,
-                      "no /" PAYLOAD_MEMBER " in any filesystem inside '%s', "
+                      "no /EFI/BOOT/BOOTX64.EFI or BOOTAA64.EFI in any "
+                      "filesystem inside '%s', "
                       "so there is no payload to sign (%zu volume(s) looked "
                       "at)", o->path, n);
         return SGN_ERR_FORMAT;
@@ -1058,17 +1069,19 @@ static int bless_img(const sgn_payload_opts *o, const uint8_t *der,
     (void)printf("  the file itself is a disk image; what is written to is "
                  "inside it:\n");
     for (i = 0; i < n; i++) {
-        if (!surveys[i].has_payload)
-            continue;
+        size_t k;
+
         /* Partition number AND byte offset: the number is what a user reads
          * in their own partition editor, and the offset is what they can
-         * check with `mount -o loop,offset=`. The other loaders beside it
-         * (BOOTIA32, BOOTAA64) are not touched, this being an x64 loader
-         * (DESIGN Section 1). */
-        (void)printf("    partition %u at byte %llu  ->  /" PAYLOAD_MEMBER
-                     "   [%s]\n", surveys[i].vol.number,
-                     (unsigned long long)surveys[i].vol.off,
-                     family_by_id(surveys[i].fam)->name);
+         * check with `mount -o loop,offset=`. */
+        for (k = 0; k < N_MEMBERS; k++) {
+            if (!(surveys[i].members & (1u << k)))
+                continue;
+            (void)printf("    partition %u at byte %llu  ->  /%s   [%s]\n",
+                         surveys[i].vol.number,
+                         (unsigned long long)surveys[i].vol.off,
+                         g_members[k], family_by_id(surveys[i].fam)->name);
+        }
     }
     if (payloads > 1)
         (void)printf("  Every one of them, because the firmware picks "
@@ -1084,34 +1097,42 @@ static int bless_img(const sgn_payload_opts *o, const uint8_t *der,
     for (i = 0; i < n; i++) {
         char member[PATH_MAX];
         fatvol v;
-        int already = 0;
+        size_t k;
 
-        if (!surveys[i].has_payload)
+        if (surveys[i].members == 0u)
             continue;
         rc = fatvol_open(&v, o->path, surveys[i].vol.off, surveys[i].vol.len,
                          o->work, 1);
         if (rc != SGN_OK)
             return rc;
-        if (snprintf(member, sizeof(member), "%s/" PAYLOAD_MEMBER, v.mnt) >=
-            (int)sizeof(member)) {
-            fatvol_close(&v);
-            sgn_set_error(SGN_ERR_NOSPACE, "the mounted payload path is too "
-                          "long");
-            return SGN_ERR_NOSPACE;
+        for (k = 0; k < N_MEMBERS; k++) {
+            int already = 0;
+
+            if (!(surveys[i].members & (1u << k)))
+                continue;
+            if (snprintf(member, sizeof(member), "%s/%s", v.mnt,
+                         g_members[k]) >= (int)sizeof(member)) {
+                fatvol_close(&v);
+                sgn_set_error(SGN_ERR_NOSPACE, "the mounted payload path is "
+                              "too long");
+                return SGN_ERR_NOSPACE;
+            }
+            rc = sign_in_place(member, o->key, o->cert, der, der_len,
+                               &already);
+            if (rc != SGN_OK) {
+                fatvol_close(&v);
+                return rc;
+            }
+            if (already)
+                already_n++;
+            else
+                signed_n++;
+            (void)printf("  volume %u  /%s  %s\n", surveys[i].vol.number,
+                         g_members[k],
+                         already ? "already signed with this key, left alone"
+                                 : "signed");
         }
-        rc = sign_in_place(member, o->key, o->cert, der, der_len,
-                           &already);
         fatvol_close(&v);
-        if (rc != SGN_OK)
-            return rc;
-        if (already)
-            already_n++;
-        else
-            signed_n++;
-        (void)printf("  volume %u  /" PAYLOAD_MEMBER "  %s\n",
-                     surveys[i].vol.number,
-                     already ? "already signed with this key, left alone"
-                             : "signed");
     }
 
     (void)printf("blessed %s\n", o->path);

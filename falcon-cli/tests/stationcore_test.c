@@ -941,9 +941,32 @@ static void test_is_esp_jump(void **state)
     assert_false(stn_is_esp_jump(NULL, 0));
 }
 
+/* The ESP's names follow the station's architecture, and only x64 and
+ * aa64 are taken. Set back to x64 at the end: the names are process-wide. */
+static void test_arch_names(void **state)
+{
+    (void)state;
+    assert_int_equal(stn_arch_set("aa64"), 0);
+    assert_string_equal(stn_n()->shim, "shimaa64.efi");
+    assert_string_equal(stn_n()->jump, "BOOTAA64.EFI");
+    assert_string_equal(stn_n()->jump_path, "\\EFI\\BOOT\\BOOTAA64.EFI");
+    assert_string_equal(stn_n()->jump_rel, "EFI/BOOT/BOOTAA64.EFI");
+    assert_string_equal(stn_n()->shim_abs, "/EFI/falcon/shimaa64.efi");
+    assert_string_equal(STN_LOADER_NOSHIM, "falconaa64.efi");
+    assert_string_equal(stn_n()->loader_file, "falcon-boot-station-aa64.efi");
+    assert_string_equal(stn_n()->jump_file, "falcon-esp-jump-aa64.efi");
+    assert_int_equal(stn_arch_set("arm"), -1);
+    assert_int_equal(stn_arch_set(NULL), -1);
+    assert_int_equal(stn_arch_set("x64"), 0);
+    assert_string_equal(stn_n()->jump_backup_ext, ".BOOTX64.EFI");
+    assert_string_equal(STN_LOADER_NOSHIM, "falconx64.efi");
+    assert_string_equal(stn_n()->loader_file, "falcon-boot-station.efi");
+}
+
 int run_stationcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test(test_arch_names),
         cmocka_unit_test(test_free_a21m),
         cmocka_unit_test(test_free_gaps),
         cmocka_unit_test(test_mbr_slots),
