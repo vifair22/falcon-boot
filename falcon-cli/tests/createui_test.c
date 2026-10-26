@@ -297,7 +297,7 @@ static void test_first_boot(void **state)
     assert_non_null(out);
     cui_first_boot(out, &p);
     (void)fclose(out);
-    assert_non_null(strstr(g_said, "falcon-boot.cer"));
+    assert_non_null(strstr(g_said, "then FALCONESP, then falcon-boot.cer."));
     assert_non_null(strstr(g_said, "or on a BIOS machine"));
     assert_null(strstr(g_said, "enrolled this MOK"));
 
