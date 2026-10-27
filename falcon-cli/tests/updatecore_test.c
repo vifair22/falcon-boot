@@ -58,6 +58,12 @@ static void test_stick(void **state)
     assert_true(p.bios);
     assert_false(p.legacy);
 
+    /* A stick made --no-p3 has no shelf and is a stick all the same. */
+    f.shelf = -1;
+    upd_plan_make(&f, &p);
+    assert_int_equal(p.kind, UPD_STICK);
+    f.shelf = 2;
+
     /* A BIOS-only stick is still a stick. */
     f.stick_loader = 0;
     upd_plan_make(&f, &p);
@@ -227,10 +233,11 @@ static void test_refusals(void **state)
     upd_plan_make(&f, &p);
     assert_int_equal(p.kind, UPD_REFUSE);
 
-    /* Half a stick is not one either. */
+    /* With a library beside it, a stick made --no-p3: it has no shelf. */
     f.library = 1;
     upd_plan_make(&f, &p);
-    assert_int_equal(p.kind, UPD_REFUSE);
+    assert_int_equal(p.kind, UPD_STICK);
+    assert_true(p.bios);
 
     /* A BIOS station whose LBA 0 is not falcon's, and no ESP half. */
     f = none();

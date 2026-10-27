@@ -505,11 +505,70 @@ signed with it, and its certificate is `falcon-boot.cer` at the root of p1.
 On a machine with Secure Boot on, shim does not run the loader until that
 certificate is enrolled. `falcon-boot-mkstick create` ends with:
 
-    First boot with Secure Boot ON: shim launches MokManager; enroll p1:/falcon-boot.cer, reboot.
+    First boot with Secure Boot ON: in MokManager, Enroll key from disk, FALCONESP, falcon-boot.cer, Continue, Yes, Reboot (Manual Section 3.1).
 
-On the first boot shim starts MokManager in place of the loader. In
-MokManager: Enroll key from disk, the stick's ESP, `falcon-boot.cer`,
-Continue, Yes, then reboot. The next boot reaches the menu.
+and interactive create (10.1.1) with the steps below, one per line. With
+Secure Boot off, or on a BIOS machine, nothing is enrolled. A stick made
+with `--key` and `--cert` boots as it is on a machine that enrolled that
+certificate already.
+
+The screens are shim 16.1's and its MokManager's, the ones `create`
+installs (Section 13.6), on an x86-64 machine; shimaa64 is the same
+program. Arrow keys move, Enter chooses.
+
+1. Boot the stick. shim cannot verify the loader yet:
+
+   ![Verification failed](img/mok-1-violation.png)
+
+   `Verification failed: (0x1A) Security Violation`. Press Enter on `OK`.
+
+2. MokManager starts:
+
+   ![Press any key to perform MOK management](img/mok-2-countdown.png)
+
+   Press a key before `Booting in N seconds` reaches 0. If it does, shim
+   tries the loader again, prints `Failed to load image: Security Policy
+   Violation`, and the firmware starts over at step 1; firmware that
+   moves on to its next boot device instead needs the stick booted
+   again.
+
+3. `Perform MOK management`: choose `Enroll key from disk`.
+
+   ![Perform MOK management](img/mok-3-menu.png)
+
+4. `Select Key` lists the volumes the firmware can read. The stick's ESP
+   is `FALCONESP`, p1's FAT label. An exFAT p2 is not listed; a FAT32 one
+   is, as `FALCON-ISO`. Choose `FALCONESP`.
+
+   ![Select Key, the volume](img/mok-4-volume.png)
+
+5. Choose `falcon-boot.cer`.
+
+   ![Select Key, the file](img/mok-5-file.png)
+
+6. `[Enroll MOK]`: `View key 0` shows the certificate; `Continue` goes on.
+
+   ![The certificate](img/mok-6-key.png)
+
+   The subject is `CN=falcon-boot MOK`, or the `--cn` the stick was made
+   with. The fingerprint is the certificate's SHA-1, the same as on the
+   host:
+
+       openssl x509 -inform der -in falcon-boot.cer -noout -fingerprint -sha1
+
+   Any key returns to `[Enroll MOK]`; choose `Continue`.
+
+7. `Enroll the key(s)?`: choose `Yes`. There is no password: the key comes
+   from the disk, at the machine.
+
+   ![Enroll the key(s)?](img/mok-7-confirm.png)
+
+8. Choose `Reboot`.
+
+   ![Reboot](img/mok-8-reboot.png)
+
+The next boot reaches the menu, and its title bar reads `SB: on  trusts:
+MOK, ...` (Section 3).
 
 From Linux on that machine instead:
 
@@ -878,9 +937,11 @@ and `APPLIANCE_CMDLINE` replaces its cmdline (default
 AArch64). When the rig's test MOK exists each also writes a `-signed.efi`
 copy, signed with that key, for the rig.
 
-On a new stick, `create` signs and stages it:
-
-    falcon-boot-mkstick create /dev/X --force --uki build/appliance/appliance-uki.efi ...
+On a new stick, `create` signs and stages it by default: the release
+ships both appliances in `/usr/lib/falcon-boot/appliance/`, and a tree
+build reads them from `build/appliance/`. Each one the stick has a loader
+for goes on an encrypted p3; `--appliance` and `--appliance-aa64` name
+others, and `--no-appliance` leaves them off.
 
 On an existing stick, sign it with the stick's MOK (Section 11.1) and copy
 it into p3's `/uki` (5.4). The loader takes a UKI as the appliance by its
@@ -2129,16 +2190,23 @@ passphrase is read from `/dev/tty` with echo off.
     falcon-boot-mkstick create <target> [--force] [--size <size>]
         [--p1-size <size>] [--iso-size <size|rest>] [--p3-size <size>]
         [--p4-size <size|rest>] [--passphrase-file <file>]
-        [--shim <dir>] [--loader <file>] [--loader-aa64 <file>]
-        [--uki <file>]... [--cn <name>]
-        [--key <file> --cert <file>] [--cert-out <file>] [--key-out <dir>] [--p3-plain]
+        [--shim <dir>] [--loader <file>] [--loader-aa64 <file> | --no-aa64]
+        [--uki <file>]... [--appliance <file>] [--appliance-aa64 <file>]
+        [--no-appliance] [--cn <name>]
+        [--key <file> --cert <file>] [--cert-out <file>] [--key-out <dir>]
+        [--no-p4 | --no-p3] [--p3-plain]
         [--p2-fs <fs>] [--p3-fs <fs>] [--stage3 <file>]
+    falcon-boot-mkstick create [--shim <dir>] [--loader <file>]
+        [--loader-aa64 <file>] [--stage3 <file>] [--appliance <file>]
+        [--appliance-aa64 <file>] [--no-appliance]
+        [--passphrase-file <file>] [--cn <name>]
 
 Makes the four-partition stick of DESIGN Section 3 on a block device or an
 image file. Needs root. Before writing anything it checks that `sgdisk`,
 `mkfs.fat`, `mkfs.exfat`, `mkfs.ext4`, `cryptsetup`, `losetup`, `mount`,
 `umount`, `openssl` and `sbsign` are on `PATH`, that the loader and shim
-exist, and that every `--uki` exists.
+exist, and that every `--uki` exists. With no `<target>` it asks
+(10.1.1).
 
 | option | default | what it does |
 |---|---|---|
@@ -2152,18 +2220,69 @@ exist, and that every `--uki` exists.
 | `--shim` | `build/shim/bins` | the directory holding shim and MokManager (Section 13.6) |
 | `--loader` | `build/bin/falcon-boot.efi` | the loader to sign and install |
 | `--loader-aa64` | `build/bin/falcon-boot-aa64.efi` | the AArch64 loader, staged beside the x64 one with shimaa64 from `--shim`. Without this option, a missing loader or shim leaves the stick x86-64 only, with a warning; given, it is required |
+| `--no-aa64` | off | no AArch64 loader, shim or appliance: the stick boots x86-64 machines only; refused with `--loader-aa64` and `--appliance-aa64` |
 | `--uki` | none | a UKI to sign with the MOK and put in p3's `/uki`; repeatable; two with the same basename are refused |
+| `--appliance` | `/usr/lib/falcon-boot/appliance/appliance-uki.efi` | the signing appliance for p3's `/uki`, signed with the MOK; staged by default when it exists and p3 is encrypted; a missing default is a warning, a missing named one an error |
+| `--appliance-aa64` | `.../appliance-uki-aa64.efi` | the AArch64 appliance, the same way; by default only on a stick with the AArch64 loader |
+| `--no-appliance` | off | stages no appliance |
 | `--cn` | `falcon-boot MOK` | the new MOK certificate's subject CN; refused with `--key` |
 | `--key`, `--cert` | a new MOK | an existing MOK private key and its certificate, both PEM, instead of a new pair: a replacement stick keeps the MOK the machines already enrolled. The key must be the certificate's, checked before anything is written. The first boot needs no enrollment where that certificate is enrolled |
 | `--cert-out` | none | also writes the public certificate here, PEM |
-| `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new |
+| `--key-out` | none | also writes `falcon-mok.key` (0600) and `falcon-mok.crt` into this directory, made 0700 if new. A directory holding a `falcon-mok.key` already is refused unless that file is the `--key` given |
+| `--no-p4` | off | no p4: p1 to p3, a shelf for UKIs and the signing appliance with no personal-OS root; p2 takes the space unless `--iso-size` is given; refused with `--p4-size` |
+| `--no-p3` | off | no p3 and no p4: p1 and p2 alone, a stick that boots media and is blessed from this host; requires `--key-out`, asks for no passphrase, and refuses every option about the shelf (`--uki`, `--appliance`, `--appliance-aa64`, `--p3-*`, `--p4-size`, `--no-p4`, `--passphrase-file`) |
 | `--p3-plain` | off | p3 without LUKS; requires `--key-out` |
 | `--p2-fs` | `exfat` | p2's filesystem: `exfat` or `fat32`. FAT32 holds no file of 4 GiB or more, which rules out most Windows ISOs; create says so before it writes anything |
 | `--p3-fs` | `ext4` | p3's filesystem: `ext4`, `fat32`, `btrfs` or `xfs` (DESIGN Section 3); `btrfs` needs `mkfs.btrfs`, `xfs` needs `mkfs.xfs` and a `--p3-size` of `320M` or more. A FAT32 shelf is mounted `umask=0077` while the key is written |
 | `--stage3` | `build/bin/falcon-bios-stage3.bin` | the BIOS stage 3 p1's reserved sectors are sized for |
 
+#### 10.1.1 Interactive
+
+`falcon-boot-mkstick create` with no target asks for the stick, reading the
+answers from stdin. An empty answer takes the default in brackets; an
+answer that does not fit is asked again; the end of input stops it with
+nothing written. Only the options of the second synopsis may be given with
+it; any other is refused with `--<name> is answered in the dialogue; give a
+target to use it`. It needs root before the first question.
+
+| question | answer | becomes |
+|---|---|---|
+| `Drive to make the stick on (1-N)` | a number from the list | the target |
+| `Type <name> to go on` | the drive's kernel name (`sdb`) | `--force`; anything else stops with nothing written |
+| what goes beside p1 and p2 | `1` a personal OS (p3 and p4), `2` the shelf only, `3` neither | nothing, `--no-p4`, `--no-p3` |
+| `Directory to keep the MOK key and certificate in` (`3` only) | a directory; default `falcon-mok` under the current one | `--key-out`; one holding `falcon-mok.key` is offered for reuse (`--key`, `--cert`) or asked again |
+| `Add the AArch64 loader` | `y` (default) or `n` | `n` is `--no-aa64` |
+| `Add the BIOS loader` | `y` (default) or `n` | `y` runs `bios --no-backup` (10.2) after create |
+| the MOK | `1` a new one, `2` reuse one (its key, then its certificate, PEM) | `--key`, `--cert` |
+| `UKI:` (with p3) | a file per line, an empty line to end | `--uki` each |
+| `Change filesystems or partition sizes?` | `n` (default) or `y`, then p1's size, p2's filesystem, p3's size and filesystem | `--p1-size`, `--p2-fs`, `--p3-size`, `--p3-fs` when not the default |
+| `Size of p2, or half` (with p4) | `half` (default) or a size; the space shown is what p1 and p3 leave | `--iso-size` |
+
+The drive list is every whole disk in `/sys/block` but loop, ram, zram,
+optical, floppy, device-mapper, md and nbd devices and empty card-reader
+slots, removable and USB disks first, each with its size, model and
+partitions. A disk is listed with a dash and `in use:` and cannot be
+chosen when it, a partition, or a mapping over one is mounted (`mounted at
+<dir>`, or `this machine's system disk` for `/`), swapped on (`used as
+swap`) or held by a mapping (`held by dm-N`). With none to choose it stops
+with `no drive here can be written`.
+
+With p3, the passphrase is asked next, as `--passphrase-file` or the
+prompt reads it (10); two entries that differ, or one that is not
+printable ASCII, are asked again, three times at most. Then the summary
+lists the drive, each partition, the loaders, the MOK, the key copy and the
+UKIs, and prints the same stick as command lines:
+
+    The same stick from the command line:
+      falcon-boot-mkstick create --force --iso-size 32G --no-aa64 /dev/sdb
+      falcon-boot-mkstick bios --no-backup /dev/sdb
+
+`Write the stick? [y/N]` takes `y`; anything else stops with nothing
+written. The stick is made as those lines make it, and the end of the
+output is the first-boot enrollment (Section 3.1).
+
 With neither `--iso-size` nor `--p4-size`, what is left after p1 and p3 is
-halved. One of them given leaves the rest to the other; both given are
+halved (with `--no-p4` or `--no-p3`, p2 takes it all). One of them given leaves the rest to the other; both given are
 taken as they are. The floors are p1 16 MiB, p2 8 MiB, p3 48 MiB and p4
 24 MiB, and a layout below one is refused with the size it needs.
 
@@ -2173,12 +2292,15 @@ What it makes:
 |---|---|---|
 | p1 | ESP, `FALCON-ESP`, FAT32 | `/EFI/BOOT/BOOTX64.EFI` (shim), MokManager under the name shim launches it by, the loader under shim's next-stage name; the same for AArch64 (`BOOTAA64.EFI`, `mmaa64.efi`, `grubaa64.efi`); `/falcon-boot.cer` |
 | p2 | Microsoft basic data, `FALCON-ISO`, exFAT (or FAT32) | `/falcon/blessed/`, `/.falcon` |
-| p3 | falcon shelf, `FALCON-UKI`, LUKS2 and the `--p3-fs` filesystem | `/uki/` with each `--uki`, `/falcon-mok.key` (0600), `/falcon-mok.crt` |
+| p3 | falcon shelf, `FALCON-UKI`, LUKS2 and the `--p3-fs` filesystem | `/uki/` with each `--uki` and the signing appliances, `/falcon-mok.key` (0600), `/falcon-mok.crt` |
 | p4 | Linux LUKS, `FALCON-ROOT`, LUKS2 and ext4 | empty |
 
 p3's keyslot is argon2id at 32768 KiB, time 4, 4 lanes, `aes-xts-plain64`
 with a 512-bit key. p4 takes cryptsetup's own argon2id cost. Both share the
-one passphrase. With `--p3-plain`, p3 is its filesystem alone and holds `/uki/`,
+one passphrase. `--no-p4` leaves p4 out, and `--no-p3` both p3 and p4:
+the loaders then draw no Personal OS row, `mkstick status` notes the stick
+has no shelf, and `mkstick update` takes the MOK from `--key` and `--cert`.
+With `--p3-plain`, p3 is its filesystem alone and holds `/uki/`,
 `/falcon-mok.crt` and `/.falcon`, with no private key; the loader asks for
 no passphrase and the initramfs prompts for p4 itself.
 
@@ -2217,7 +2339,7 @@ refused while any of its partitions is mounted.
 It ends:
 
     <target> is ready (install ID <32 hex digits>).
-    First boot with Secure Boot ON: shim launches MokManager; enroll p1:/falcon-boot.cer, reboot.
+    First boot with Secure Boot ON: in MokManager, Enroll key from disk, FALCONESP, falcon-boot.cer, Continue, Yes, Reboot (Manual Section 3.1).
 
 ### 10.2 bios
 
@@ -2721,7 +2843,7 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 | `--arch` | this machine's | the station's architecture, `x64` or `aa64` (10.6) |
 | `--backup-dir` | `.` | where what is replaced is saved |
 | `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
-| `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it; given together |
+| `--key`, `--cert` | the shelf's | the MOK pair, for an install whose shelf does not hold it or that has none (`create --no-p3`); given together |
 | `--owner-auth-file` | as for `station totp` | the TPM owner's authorisation, for the reseal |
 | `--dry-run` | off | prints the plan and writes nothing |
 | `--yes` | off | does not ask |
@@ -2730,7 +2852,7 @@ What the disk is comes from its records:
 
 | disk | found by | written |
 |---|---|---|
-| stick | a boot record, with a library and a shelf of its install ID | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1 |
+| stick | a boot record, with a library of its install ID (and its shelf, unless made `--no-p3`) | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1 |
 | BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
 | UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |
@@ -3877,6 +3999,7 @@ carries both chains.
 | `usr/lib/falcon-boot/bin/` | `falcon-boot.efi` (the stick), `falcon-boot-station.efi`, `falcon-esp-jump.efi`, the same three with `-aa64` for AArch64, the BIOS stages 1 and 2, stage 3 for the stick, the station and station-legacy, and `mod/` (jump's drivers) |
 | `usr/lib/falcon-boot/shim/bins/` | Fedora's shim 16.1 and its MokManager for x86-64 and for AArch64, signed by Microsoft's UEFI CA (2011 for x86-64, 2023 for AArch64) |
 | `usr/lib/falcon-boot/memtest/` | memtest86+ 8.10: `memtest-i586.bin` for `--memtest`, `memtest-x86_64.efi` for `--memtest-efi` |
+| `usr/lib/falcon-boot/appliance/` | the signing appliance, unsigned, for x86-64 and AArch64 (`appliance-uki.efi`, `appliance-uki-aa64.efi`), each with a `.sources` record of the third-party builds it carries (`THIRD-PARTY.md`) |
 | `usr/share/doc/falcon-boot/` | `README.md`, this Manual, `DESIGN.md`, `LICENSE`, `THIRD-PARTY.md` (shim's and memtest86+'s licences and sources) |
 | `VERSION`, `MANIFEST` | the build's version string, and every other file's SHA-256 |
 

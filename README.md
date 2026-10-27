@@ -114,17 +114,24 @@ tar xzf falcon-boot-X.Y.Z-<arch>.tar.gz
 sudo cp -r falcon-boot-X.Y.Z/usr/. /usr/
 ```
 
-Then make a stick, add the BIOS loader if you want it, and copy ISOs onto
-the partition labelled `FALCON-ISO`:
+Then make a stick and copy ISOs onto the partition labelled `FALCON-ISO`:
+
+```sh
+sudo falcon-boot-mkstick create
+```
+
+It lists the drives, asks what to put on the one you choose, and prints
+the same stick as a command line before writing it. From flags instead:
 
 ```sh
 sudo falcon-boot-mkstick create /dev/disk/by-id/usb-<your stick> --force
 sudo falcon-boot-mkstick bios /dev/disk/by-id/usb-<your stick>
 ```
 
-With Secure Boot on, the first boot opens MokManager: enroll
-`falcon-boot.cer` from the stick's boot partition and reboot (Manual
-Section 3.1). `docs/Manual.md` is the full reference: the menu, every
+With Secure Boot on, the first boot stops at shim's `Verification
+failed: (0x1A) Security Violation`: press Enter, press a key for
+MokManager, then Enroll key from disk, `FALCONESP`, `falcon-boot.cer`,
+Continue, Yes, Reboot. Manual Section 3.1 has every screen. `docs/Manual.md` is the full reference: the menu, every
 route, blessing, the personal OS, the station and `STATION.INI`, jump, every
 `falcon-boot-mkstick` command, and what to do on each failure page.
 

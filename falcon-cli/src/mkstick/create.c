@@ -44,7 +44,9 @@
 #include <common/util.h>
 #include <mkstick/bioscore.h>
 #include <mkstick/cleanup.h>
+#include <mkstick/createui.h>
 #include <mkstick/disk.h>
+#include <mkstick/drives.h>
 #include <mkstick/keys.h>
 #include <mkstick/pass.h>
 #include <mkstick/records.h>
@@ -63,6 +65,10 @@
 #define DEFAULT_SHIM_DIR   FALCON_DATADIR "/shim/bins"
 #define DEFAULT_LOADER     FALCON_DATADIR "/bin/falcon-boot.efi"
 #define DEFAULT_LOADER_AA64 FALCON_DATADIR "/bin/falcon-boot-aa64.efi"
+/* The signing appliance (DESIGN Section 7.5), unsigned, as the release
+ * ships it and `make appliance` builds it. */
+#define DEFAULT_APPLIANCE      FALCON_DATADIR "/appliance/appliance-uki.efi"
+#define DEFAULT_APPLIANCE_AA64 FALCON_DATADIR "/appliance/appliance-uki-aa64.efi"
 #define DEFAULT_STAGE3     FALCON_DATADIR "/bin/falcon-bios-stage3.bin"
 
 /* Every external tool this command needs, checked before the first byte is
@@ -94,8 +100,16 @@ static const cli_opt create_opts[] = {
       "the falcon-boot.efi to sign and install" },
     { "loader-aa64", CLI_OPT_VALUE, 0, "<file>",
       "the AArch64 falcon-boot-aa64.efi (default " DEFAULT_LOADER_AA64 ")" },
+    { "no-aa64", CLI_OPT_FLAG, 0, NULL,
+      "no AArch64 loader: the stick boots x86-64 machines only" },
     { "uki", CLI_OPT_VALUE, 1, "<file>",
       "a UKI to sign with the MOK and stage on p3:/uki" },
+    { "appliance", CLI_OPT_VALUE, 0, "<file>",
+      "the signing appliance UKI for p3 (default " DEFAULT_APPLIANCE ")" },
+    { "appliance-aa64", CLI_OPT_VALUE, 0, "<file>",
+      "the AArch64 appliance (default " DEFAULT_APPLIANCE_AA64 ")" },
+    { "no-appliance", CLI_OPT_FLAG, 0, NULL,
+      "stage no signing appliance on p3" },
     { "cn", CLI_OPT_VALUE, 0, "<name>",
       "subject CN of the MOK certificate" },
     { "key", CLI_OPT_VALUE, 0, "<file>",
@@ -106,6 +120,10 @@ static const cli_opt create_opts[] = {
       "also write the PUBLIC certificate here, in PEM form" },
     { "key-out", CLI_OPT_VALUE, 0, "<dir>",
       "also keep the MOK key and cert here (host-side signing route)" },
+    { "no-p4", CLI_OPT_FLAG, 0, NULL,
+      "no p4: a shelf for UKIs and blessing, no personal-OS root" },
+    { "no-p3", CLI_OPT_FLAG, 0, NULL,
+      "no p3 and no p4: an ISO stick; the MOK key lives in --key-out" },
     { "p3-plain", CLI_OPT_FLAG, 0, NULL,
       "create p3 WITHOUT LUKS; no on-stick private key, no signing appliance" },
     { "p2-fs", CLI_OPT_VALUE, 0, "<fs>",
@@ -207,10 +225,17 @@ static cli_status fs_choose(const cli_args *a, const char *opt,
 /* What `create` was asked to build, beyond the sizes. Gathered once so the
  * steps below take a decision rather than re-reading the command line. */
 typedef struct {
+    int         has_p3;
+    int         has_p4;
     int         p3_plain;
     const char *p2_fs;
     const char *p3_fs;
 } fs_plan;
+
+static unsigned n_parts(const fs_plan *p)
+{
+    return p->has_p4 ? 4u : p->has_p3 ? 3u : 2u;
+}
 
 /* ---- a small argv builder, because sgdisk's arguments are computed ---- */
 
@@ -305,8 +330,10 @@ static cli_status size_opt(const cli_args *a, const char *name,
     return CLI_OK;
 }
 
+/* An absent partition is size 0 and has no floor; p2 takes what p4 would
+ * have, unless --iso-size pins it. */
 static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
-                              layout *out)
+                              const fs_plan *parts, layout *out)
 {
     /* One MiB at the front for the protective MBR and the primary GPT (which
      * need 34 sectors) and one at the back for the backup GPT, both rounded
@@ -338,7 +365,7 @@ static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
     rc = size_opt(a, "p1-size", MKS_DEFAULT_P1, &p1, NULL);
     if (rc != CLI_OK)
         return rc;
-    rc = size_opt(a, "p3-size", MKS_DEFAULT_P3, &p3, NULL);
+    rc = size_opt(a, "p3-size", parts->has_p3 ? MKS_DEFAULT_P3 : 0, &p3, NULL);
     if (rc != CLI_OK)
         return rc;
     rc = size_opt(a, "iso-size", 0, &p2, &p2_rest);
@@ -347,8 +374,10 @@ static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
     rc = size_opt(a, "p4-size", 0, &p4, &p4_rest);
     if (rc != CLI_OK)
         return rc;
+    if (!parts->has_p4 && !p2_rest && p2 == 0)
+        p2_rest = 1;
 
-    if (p1 + p3 + MKS_MIN_P2 + MKS_MIN_P4 > pool)
+    if (p1 + p3 + MKS_MIN_P2 + (parts->has_p4 ? MKS_MIN_P4 : 0) > pool)
         return set_error(CLI_ERR_RANGE,
                          "the target holds %llu bytes, which does not cover "
                          "p1 (%llu) + p3 (%llu) and the floors for p2 and p4; "
@@ -390,9 +419,11 @@ static cli_status plan_layout(const cli_args *a, uint64_t disk_bytes,
     out->size[0] = p1;
     out->size[1] = p2;
     out->size[2] = p3;
-    out->size[3] = p4;
+    out->size[3] = parts->has_p4 ? p4 : 0;
 
     for (i = 0; i < MKS_PARTS; i++) {
+        if ((i == 2 && !parts->has_p3) || (i == 3 && !parts->has_p4))
+            continue;
         if (out->size[i] < floor_[i]) {
             char want[32];
             char got[32];
@@ -518,7 +549,8 @@ static uint32_t p1_reserved(const char *stage3)
 
 /* ---- the steps ---- */
 
-static cli_status write_partition_table(const mks_disk *d, const layout *l)
+static cli_status write_partition_table(const mks_disk *d, const layout *l,
+                                        unsigned nparts)
 {
     argbuf ab;
     uint64_t mib[MKS_PARTS];
@@ -545,19 +577,22 @@ static cli_status write_partition_table(const mks_disk *d, const layout *l)
     ab_addf(&ab, "-t2:%s", MKS_TYPE_ISO);
     ab_addf(&ab, "-c2:%s", MKS_LABEL_P2);
 
-    ab_addf(&ab, "-n3:0:+%lluM", (unsigned long long)mib[2]);
-    ab_addf(&ab, "-t3:%s", MKS_TYPE_SHELF);
-    ab_addf(&ab, "-c3:%s", MKS_LABEL_P3);
-
-    ab_addf(&ab, "-n4:0:+%lluM", (unsigned long long)mib[3]);
-    ab_addf(&ab, "-t4:%s", MKS_TYPE_LUKS);
-    ab_addf(&ab, "-c4:%s", MKS_LABEL_P4);
+    if (nparts >= 3u) {
+        ab_addf(&ab, "-n3:0:+%lluM", (unsigned long long)mib[2]);
+        ab_addf(&ab, "-t3:%s", MKS_TYPE_SHELF);
+        ab_addf(&ab, "-c3:%s", MKS_LABEL_P3);
+    }
+    if (nparts >= 4u) {
+        ab_addf(&ab, "-n4:0:+%lluM", (unsigned long long)mib[3]);
+        ab_addf(&ab, "-t4:%s", MKS_TYPE_LUKS);
+        ab_addf(&ab, "-c4:%s", MKS_LABEL_P4);
+    }
 
     ab_add(&ab, d->path);
     if (ab.rc != CLI_OK)
         return ab.rc;
 
-    log_info("partitioning (GPT, four partitions per DESIGN Section 3)");
+    log_info("partitioning (GPT, %u partitions per DESIGN Section 3)", nparts);
     {
         proc_spec spec;
 
@@ -676,6 +711,9 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
     if (rc != CLI_OK)
         return rc;
 
+    if (!plan->has_p3)
+        return CLI_OK;
+
     /* DESIGN Section 3: p3's encryption is the default, not a requirement.
      * Plaintext means no keyslot to format and no mapper to open; the
      * filesystem goes straight onto the partition, and the consequences were
@@ -733,6 +771,8 @@ static cli_status make_filesystems(const mks_disk *d, const mks_pass *pass,
         return rc;
 
 p4:
+    if (!plan->has_p4)
+        return CLI_OK;
     /* p4 keeps cryptsetup's own argon2id cost, benchmarked here, because it
      * is unlocked by the Linux kernel inside the UKI's initramfs (DESIGN
      * Section 3), on a machine that has booted, with its threads. The
@@ -908,6 +948,7 @@ static cli_status install_esp(const mks_disk *d, const char *mnt,
 static cli_status install_shelf(const cli_args *a, const mks_disk *d,
                                 const char *mnt, const mks_pass *pass,
                                 const mok_keys *keys, const fs_plan *plan,
+                                const char *const *apps, size_t n_apps,
                                 const uint8_t id[IDENT_ID_LEN])
 {
     char mapper[64];
@@ -950,15 +991,17 @@ static cli_status install_shelf(const cli_args *a, const mks_disk *d,
     if (rc == CLI_OK)
         rc = util_mkdir_p(ukidir, 0755);
 
-    for (i = 0; i < n && rc == CLI_OK; i++) {
-        const char *src = cli_at(a, "uki", i);
+    /* The --uki images, then the appliances: one list, one rule. */
+    for (i = 0; i < n + n_apps && rc == CLI_OK; i++) {
+        const char *src = i < n ? cli_at(a, "uki", i) : apps[i - n];
 
         rc = util_join(dst, sizeof dst, ukidir, util_basename(src));
         if (rc != CLI_OK)
             break;
         if (util_is_file(dst)) {
             rc = set_error(CLI_ERR_EXISTS,
-                           "two --uki arguments have the basename %s",
+                           "two UKIs for p3 have the basename %s (an "
+                           "appliance belongs in --appliance, not --uki)",
                            util_basename(src));
             break;
         }
@@ -1043,7 +1086,85 @@ static cli_status install_iso_library(const mks_disk *d, const char *mnt,
 
 /* ---- the command ---- */
 
-static cli_status create_run(const cli_args *a)
+/* The signing appliances p3 gets (DESIGN Section 7.5): by default each
+ * one there is, for the machines the stick boots; named, or refused. The
+ * appliance reads the private key off an encrypted p3, so a plaintext
+ * shelf gets none. */
+static cli_status choose_appliances(const cli_args *a, const fs_plan *plan,
+                                    size_t n_chains, const char **apps,
+                                    size_t *n_apps)
+{
+    static const struct {
+        const char *opt;
+        const char *dflt;
+        size_t chains;      /* staged by default when this many chains */
+    } want[2] = {
+        { "appliance", DEFAULT_APPLIANCE, 1 },
+        { "appliance-aa64", DEFAULT_APPLIANCE_AA64, 2 },
+    };
+    size_t i;
+
+    *n_apps = 0;
+    if (!plan->has_p3 || cli_flag(a, "no-appliance"))
+        return CLI_OK;
+    for (i = 0; i < 2; i++) {
+        const char *named = cli_value(a, want[i].opt, NULL);
+        const char *path = named != NULL ? named : want[i].dflt;
+
+        if (plan->p3_plain) {
+            if (named != NULL)
+                return set_error(CLI_ERR_USAGE, "--%s with --p3-plain: the "
+                                 "appliance reads the MOK private key off an "
+                                 "encrypted p3", want[i].opt);
+            continue;
+        }
+        if (named == NULL && n_chains < want[i].chains)
+            continue;
+        if (!util_is_file(path)) {
+            if (named != NULL)
+                return set_error(CLI_ERR_NOTFOUND, "no appliance at %s",
+                                 named);
+            log_warn("no signing appliance at %s: this stick blesses on a "
+                     "host alone (make %s, or --no-appliance)", path,
+                     i == 0 ? "appliance" : "appliance-aa64");
+            continue;
+        }
+        apps[(*n_apps)++] = path;
+    }
+    return CLI_OK;
+}
+
+/* p3 holds the LUKS2 header, then everything staged on it, and room for a
+ * filesystem's own metadata. */
+static cli_status shelf_fits(const cli_args *a, const layout *plan,
+                             const char *const *apps, size_t n_apps)
+{
+    uint64_t need = (uint64_t)24 << 20;
+    char have[32];
+    char want[32];
+    struct stat st;
+    size_t i;
+
+    for (i = 0; i < cli_count(a, "uki"); i++) {
+        if (stat(cli_at(a, "uki", i), &st) == 0)
+            need += (uint64_t)st.st_size;
+    }
+    for (i = 0; i < n_apps; i++) {
+        if (stat(apps[i], &st) == 0)
+            need += (uint64_t)st.st_size;
+    }
+    if (plan->size[2] >= need)
+        return CLI_OK;
+    return set_error(CLI_ERR_RANGE, "p3 (%s) cannot hold what goes on it "
+                     "(%s with its LUKS2 header); raise --p3-size, or pass "
+                     "--no-appliance",
+                     util_format_size(plan->size[2], have, sizeof have),
+                     util_format_size(need, want, sizeof want));
+}
+
+/* The stick the command line describes. `given` is a passphrase the
+ * dialogue asked for already; NULL prompts here when one is needed. */
+static cli_status create_build(const cli_args *a, const mks_pass *given)
 {
     const char *target = a->pos[0];
     const char *shim_dir = cli_value(a, "shim", DEFAULT_SHIM_DIR);
@@ -1070,6 +1191,8 @@ static cli_status create_run(const cli_args *a)
     mks_pass pass;
     mok_keys keys;
     layout plan;
+    const char *apps[2];
+    size_t n_apps = 0;
     cli_status rc;
     size_t i;
 
@@ -1092,8 +1215,50 @@ static cli_status create_run(const cli_args *a)
         if (rc != CLI_OK)
             return rc;
     }
+    /* --key-out writes falcon-mok.key over whatever is there, and a key it
+     * replaced is a stick nothing can sign for any more. */
+    if (key_out != NULL) {
+        char there[MKS_PATH_MAX];
+        char a_real[MKS_PATH_MAX];
+        char b_real[MKS_PATH_MAX];
 
+        rc = util_join(there, sizeof there, key_out, MKS_P3_KEY_NAME);
+        if (rc != CLI_OK)
+            return rc;
+        if (util_is_file(there) &&
+            (key_in == NULL || realpath(there, a_real) == NULL ||
+             realpath(key_in, b_real) == NULL ||
+             strcmp(a_real, b_real) != 0))
+            return set_error(CLI_ERR_EXISTS, "%s holds a MOK key already; "
+                             "pass it as --key and --cert, or choose another "
+                             "--key-out", there);
+    }
+
+    plan_fs.has_p3 = !cli_flag(a, "no-p3");
+    plan_fs.has_p4 = plan_fs.has_p3 && !cli_flag(a, "no-p4");
     plan_fs.p3_plain = cli_flag(a, "p3-plain");
+    /* DESIGN Section 3: no p3 is a stick that boots media and nothing else,
+     * and p4 is the root the shelf's UKI boots, so it goes with p3. */
+    if (!plan_fs.has_p3) {
+        static const char *const shelf_opts[] = {
+            "no-p4", "p3-plain", "p3-fs", "p3-size", "p4-size", "uki",
+            "passphrase-file", "appliance", "appliance-aa64"
+        };
+
+        for (i = 0; i < sizeof shelf_opts / sizeof shelf_opts[0]; i++) {
+            if (cli_flag(a, shelf_opts[i]))
+                return set_error(CLI_ERR_USAGE, "--no-p3 makes no shelf: "
+                                 "--%s has nothing to act on", shelf_opts[i]);
+        }
+        if (key_out == NULL)
+            return set_error(CLI_ERR_USAGE,
+                             "--no-p3 leaves the MOK private key nowhere to "
+                             "live. Pass --key-out <dir> to keep it on this "
+                             "host, or drop --no-p3");
+    } else if (!plan_fs.has_p4 && cli_value(a, "p4-size", NULL) != NULL) {
+        return set_error(CLI_ERR_USAGE, "--no-p4 makes no p4: --p4-size has "
+                         "nothing to size");
+    }
     rc = fs_choose(a, "p2-fs", p2_implemented,
                    sizeof p2_implemented / sizeof p2_implemented[0], "exfat",
                    &plan_fs.p2_fs);
@@ -1150,7 +1315,7 @@ static cli_status create_run(const cli_args *a)
                              "rather than reimplementing it (DESIGN Section "
                              "8)", required_tools[i]);
     }
-    if (mkfs_tool(plan_fs.p3_fs) != NULL &&
+    if (plan_fs.has_p3 && mkfs_tool(plan_fs.p3_fs) != NULL &&
         !proc_exists(mkfs_tool(plan_fs.p3_fs)))
         return set_error(CLI_ERR_NOTFOUND, "--p3-fs %s needs %s on PATH",
                          plan_fs.p3_fs, mkfs_tool(plan_fs.p3_fs));
@@ -1185,19 +1350,22 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         return rc;
 
-    rc = plan_layout(a, disk.size, &plan);
+    rc = plan_layout(a, disk.size, &plan_fs, &plan);
     if (rc != CLI_OK)
         return rc;
     /* mkfs.xfs makes nothing under 300 MB, and the LUKS2 header comes out
      * of the partition first. */
-    if (strcmp(plan_fs.p3_fs, "xfs") == 0 &&
+    if (plan_fs.has_p3 && strcmp(plan_fs.p3_fs, "xfs") == 0 &&
         plan.size[2] < MKS_MIN_P3_XFS)
         return set_error(CLI_ERR_RANGE, "--p3-fs xfs needs --p3-size %s or "
                          "more", util_format_size(MKS_MIN_P3_XFS, sizetext,
                                                   sizeof sizetext));
-    for (i = 0; i < MKS_PARTS; i++)
-        log_info("  p%zu %s", i + 1u,
-                 util_format_size(plan.size[i], sizetext, sizeof sizetext));
+    for (i = 0; i < MKS_PARTS; i++) {
+        if (plan.size[i] != 0)
+            log_info("  p%zu %s", i + 1u,
+                     util_format_size(plan.size[i], sizetext,
+                                      sizeof sizetext));
+    }
 
     if (!util_is_file(loader))
         return set_error(CLI_ERR_NOTFOUND,
@@ -1215,7 +1383,14 @@ static cli_status create_run(const cli_args *a)
      * out. */
     chains[1].arch = "aa64";
     chains[1].loader = loader_aa64 != NULL ? loader_aa64 : DEFAULT_LOADER_AA64;
-    if (!util_is_file(chains[1].loader)) {
+    if (cli_flag(a, "no-aa64")) {
+        if (loader_aa64 != NULL ||
+            cli_value(a, "appliance-aa64", NULL) != NULL)
+            return set_error(CLI_ERR_USAGE, "--no-aa64 leaves out the "
+                             "AArch64 chain: --%s has nothing to act on",
+                             loader_aa64 != NULL ? "loader-aa64"
+                                                 : "appliance-aa64");
+    } else if (!util_is_file(chains[1].loader)) {
         if (loader_aa64 != NULL)
             return set_error(CLI_ERR_NOTFOUND, "no AArch64 loader at %s",
                              loader_aa64);
@@ -1237,6 +1412,15 @@ static cli_status create_run(const cli_args *a)
             return set_error(CLI_ERR_NOTFOUND, "no UKI at %s", u);
     }
 
+    rc = choose_appliances(a, &plan_fs, n_chains, apps, &n_apps);
+    if (rc != CLI_OK)
+        return rc;
+    if (plan_fs.has_p3) {
+        rc = shelf_fits(a, &plan, apps, n_apps);
+        if (rc != CLI_OK)
+            return rc;
+    }
+
     reserve = p1_reserved(stage3);
     if (reserve == 0u)
         return set_error(CLI_ERR_RANGE,
@@ -1247,9 +1431,15 @@ static cli_status create_run(const cli_args *a)
     records_id_hex(install_id, idhex);
     log_info("install ID: %s", idhex);
 
-    rc = pass_acquire(&pass, cli_value(a, "passphrase-file", NULL));
-    if (rc != CLI_OK)
-        return rc;
+    /* A passphrase opens LUKS2: an encrypted p3, or p4. */
+    if ((plan_fs.has_p3 && !plan_fs.p3_plain) || plan_fs.has_p4) {
+        if (given != NULL)
+            pass = *given;
+        else
+            rc = pass_acquire(&pass, cli_value(a, "passphrase-file", NULL));
+        if (rc != CLI_OK)
+            return rc;
+    }
 
     /* Everything below leaves state behind on failure, so from here on every
      * exit goes through `out`. */
@@ -1271,7 +1461,7 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         goto out;
 
-    rc = write_partition_table(&disk, &plan);
+    rc = write_partition_table(&disk, &plan, n_parts(&plan_fs));
     if (rc != CLI_OK)
         goto out;
 
@@ -1280,7 +1470,7 @@ static cli_status create_run(const cli_args *a)
         goto out;
     if (disk.is_block && proc_exists("partprobe"))
         (void)proc_runl_quiet("partprobe", disk.base, PROC_END);
-    rc = disk_settle(&disk);
+    rc = disk_settle(&disk, n_parts(&plan_fs));
     if (rc != CLI_OK)
         goto out;
 
@@ -1317,9 +1507,12 @@ static cli_status create_run(const cli_args *a)
     if (rc != CLI_OK)
         goto out;
 
-    rc = install_shelf(a, &disk, mntdir, &pass, &keys, &plan_fs, install_id);
-    if (rc != CLI_OK)
-        goto out;
+    if (plan_fs.has_p3) {
+        rc = install_shelf(a, &disk, mntdir, &pass, &keys, &plan_fs, apps,
+                           n_apps, install_id);
+        if (rc != CLI_OK)
+            goto out;
+    }
 
     rc = install_iso_library(&disk, mntdir, install_id);
     if (rc != CLI_OK)
@@ -1381,10 +1574,15 @@ out:
             log_info("The MOK is the one from %s: a machine that enrolled "
                      "it boots this stick as it booted the last one.",
                      cert_in);
-        else
-            log_info("First boot with Secure Boot ON: shim launches "
-                     "MokManager; enroll p1:/%s, reboot.", MKS_ESP_CERT_NAME);
-        if (plan_fs.p3_plain)
+        else if (given == NULL)
+            log_info("First boot with Secure Boot ON: in MokManager, "
+                     "Enroll key from disk, FALCONESP, %s, Continue, Yes, "
+                     "Reboot (Manual Section 3.1).", MKS_ESP_CERT_NAME);
+        if (!plan_fs.has_p3)
+            log_warn("no shelf: no personal OS and no signing appliance on "
+                     "this stick, and the only copy of the MOK private key is "
+                     "the one in %s.", key_out);
+        else if (plan_fs.p3_plain)
             log_warn("p3 is PLAINTEXT: no signing appliance on this stick, "
                      "and the only copy of the MOK private key is the one in "
                      "%s.", key_out);
@@ -1392,13 +1590,175 @@ out:
     return rc;
 }
 
+/* ---- interactive create ---- */
+
+/* What may be given with no target: where the parts come from, and the
+ * passphrase file. Everything else is a question the dialogue asks. */
+static const char *const preset_opts[] = {
+    "shim", "loader", "loader-aa64", "stage3", "appliance", "appliance-aa64",
+    "no-appliance", "passphrase-file", "cn"
+};
+
+static cli_status presets(const cli_args *a, const char **out, size_t cap,
+                          size_t *n)
+{
+    static char spelled[CLI_MAX_OPTS][40];
+    size_t i;
+
+    *n = 0;
+    for (i = 0; i < a->cmd->nopts && i < CLI_MAX_OPTS; i++) {
+        const cli_opt *o = &a->cmd->opts[i];
+        size_t k;
+        int ok = 0;
+
+        if (a->seen[i] == 0)
+            continue;
+        for (k = 0; k < sizeof preset_opts / sizeof preset_opts[0]; k++) {
+            if (strcmp(o->name, preset_opts[k]) == 0)
+                ok = 1;
+        }
+        if (!ok)
+            return set_error(CLI_ERR_USAGE, "--%s is answered in the "
+                             "dialogue; give a target to use it", o->name);
+        if (*n + 2u > cap)
+            return set_error(CLI_ERR_RANGE, "too many options");
+        (void)snprintf(spelled[i], sizeof spelled[i], "--%s", o->name);
+        out[(*n)++] = spelled[i];
+        if (o->kind == CLI_OPT_VALUE)
+            out[(*n)++] = cli_value(a, o->name, NULL);
+    }
+    return CLI_OK;
+}
+
+/* The passphrase, asked again when the two entries differ. */
+static cli_status ask_pass(const cli_args *a, const cui_plan *p,
+                           mks_pass *pass)
+{
+    const char *file = cli_value(a, "passphrase-file", NULL);
+    cli_status rc = CLI_OK;
+    int tries;
+
+    if (file != NULL)
+        return pass_acquire(pass, file);
+    (void)printf("\nThe passphrase opens p3%s, at the boot menu%s.\n",
+                 p->has_p4 ? " and p4" : "",
+                 p->has_p4 ? " and in the personal OS" : "");
+    (void)fflush(stdout);
+    for (tries = 0; tries < 3; tries++) {
+        rc = pass_acquire(pass, NULL);
+        if (rc != CLI_ERR_INVALID)
+            return rc;
+        log_error("%s", cli_error_msg());
+        cli_error_clear();
+    }
+    return set_error(CLI_ERR_INVALID, "no passphrase after three tries");
+}
+
+static cli_status create_interactive(const cli_args *a)
+{
+    static drv_entry drives[DRV_MAX];
+    static cui_plan plan;
+    const char *extra[2u * CLI_MAX_OPTS];
+    char key_dir[MKS_PATH_MAX];
+    char cwd[MKS_PATH_MAX];
+    size_t n_extra = 0;
+    size_t n_drives = 0;
+    drv_env env;
+    cui_io io;
+    mks_pass pass;
+    cli_args parsed;
+    cli_status rc;
+
+    memset(&pass, 0, sizeof pass);
+    rc = presets(a, extra, sizeof extra / sizeof extra[0], &n_extra);
+    if (rc != CLI_OK)
+        return rc;
+    if (geteuid() != 0)
+        return set_error(CLI_ERR_PERM, "mkstick create needs root: it "
+                         "attaches loop devices, opens LUKS mappings and "
+                         "mounts filesystems");
+
+    drv_env_default(&env);
+    /* The core rig's interactive case offers a disk of its own. */
+    if (getenv("FALCON_MKSTICK_SYS") != NULL)
+        env.sys = getenv("FALCON_MKSTICK_SYS");
+    if (getenv("FALCON_MKSTICK_DEV") != NULL)
+        env.dev = getenv("FALCON_MKSTICK_DEV");
+    rc = drv_list(&env, drives, DRV_MAX, &n_drives);
+    if (rc != CLI_OK)
+        return rc;
+
+    if (getcwd(cwd, sizeof cwd) == NULL)
+        (void)snprintf(cwd, sizeof cwd, ".");
+    rc = util_join(key_dir, sizeof key_dir, cwd, "falcon-mok");
+    if (rc != CLI_OK)
+        return rc;
+
+    io.in = stdin;
+    io.out = stdout;
+    io.drives = drives;
+    io.n_drives = n_drives;
+    io.prog = "falcon-boot-mkstick";
+    io.key_dir = key_dir;
+    rc = cui_ask(&io, &plan);
+    if (rc == CLI_OK)
+        rc = cui_build(&plan, extra, n_extra,
+                       cli_value(a, "stage3", NULL));
+    if (rc != CLI_OK)
+        return rc;
+    if (plan.has_p3) {
+        rc = ask_pass(a, &plan, &pass);
+        if (rc != CLI_OK)
+            return rc;
+    }
+    if (!cui_confirm(&io, &plan)) {
+        pass_wipe(&pass);
+        return set_error(CLI_ERR_PERM, "not confirmed; nothing was written");
+    }
+    cli_log_blank();
+
+    rc = cli_parse(&mks_cmd_create, "falcon-boot-mkstick", plan.argc,
+                   plan.argv, &parsed);
+    if (rc == CLI_OK)
+        rc = create_build(&parsed, plan.has_p3 ? &pass : NULL);
+    pass_wipe(&pass);
+    if (rc == CLI_OK && plan.bios) {
+        mks_bios_req req;
+
+        memset(&req, 0, sizeof req);
+        req.target = plan.drive->path;
+        req.stage3 = cli_value(a, "stage3", NULL);
+        req.no_backup = 1;
+        cli_log_blank();
+        rc = mks_bios_install(&req);
+    }
+    if (rc == CLI_OK)
+        cui_first_boot(stdout, &plan);
+    return rc;
+}
+
+static cli_status create_run(const cli_args *a)
+{
+    if (a->npos == 0)
+        return create_interactive(a);
+    return create_build(a, NULL);
+}
+
 const cli_cmd mks_cmd_create = {
     "create",
     "build a complete falcon-boot stick on a block device or image file",
-    "<target>",
+    "[<target>]",
     create_opts,
     sizeof create_opts / sizeof create_opts[0],
-    1, 1,
+    0, 1,
+    "With no target, create asks: which drive, what goes on it, which\n"
+    "loaders, which MOK, the passphrase, the UKIs, and filesystems and\n"
+    "sizes. Removable drives are listed first; one this machine is using is\n"
+    "listed and cannot be chosen. The summary prints the same stick as a\n"
+    "command line. With no target, only --shim, --loader, --loader-aa64,\n"
+    "--stage3, --appliance, --appliance-aa64, --no-appliance,\n"
+    "--passphrase-file and --cn may be given.\n"
+    "\n"
     "layout (DESIGN Section 3):\n"
     "  p1  ESP        FAT32          default 64M   shim, MokManager, loader, cert\n"
     "  p2  ISO lib    exFAT          half the rest drag-and-drop ISOs\n"
@@ -1410,6 +1770,16 @@ const cli_cmd mks_cmd_create = {
     MKS_STR(MKS_STICK_KDF_TIME) ", " MKS_STR(MKS_STICK_KDF_LANES) " lanes);\n"
     "p4 keeps cryptsetup's benchmarked argon2id because Linux opens it. Both\n"
     "share one passphrase.\n"
+    "\n"
+    "--no-p4 leaves out p4: a stick with a shelf for UKIs and blessing and no\n"
+    "personal-OS root, p2 taking the space. --no-p3 leaves out p3 and p4: a\n"
+    "stick that boots media and nothing else, blessed from a host, so it\n"
+    "needs --key-out for the MOK private key.\n"
+    "\n"
+    "The signing appliance (Section 7.5) goes on an encrypted p3 by default,\n"
+    "signed with the MOK: " DEFAULT_APPLIANCE ",\n"
+    "and the AArch64 one beside it on a stick with the AArch64 loader.\n"
+    "--no-appliance leaves them off.\n"
     "\n"
     "--p3-plain drops the LUKS layer on p3 (Section 3). The stick then has no\n"
     "on-stick private key and so no signing appliance, and the loader asks for\n"

@@ -96,12 +96,14 @@ release-check:
 release: release-check $(MKSTICK_REL) $(SIGN_STATIC) $(MKSTICK_REL_A64) \
 		$(SIGN_STATIC_A64) $(RELEASE_EFI_AA64) $(EFI) $(EFI_STATION) \
 		$(EFI_ESP_JUMP) $(BIOS_STAGE1) $(BIOS_STAGE2) $(BIOS_STAGE3) $(BIOS_STATION_STAGE3) \
-		$(BIOS_STATION_LEGACY_STAGE3) $(JUMP_MODS) station-bundle jump
+		$(BIOS_STATION_LEGACY_STAGE3) $(JUMP_MODS) station-bundle jump \
+		appliance appliance-aa64
 	@rm -rf $(RELEASE_DIR)
 	@mkdir -p $(RELEASE_STAGE)/usr/bin \
 		$(RELEASE_STAGE)$(RELEASE_DATADIR)/bin/mod \
 		$(RELEASE_STAGE)$(RELEASE_DATADIR)/shim/bins \
 		$(RELEASE_STAGE)$(RELEASE_DATADIR)/memtest \
+		$(RELEASE_STAGE)$(RELEASE_DATADIR)/appliance \
 		$(RELEASE_STAGE)/usr/share/doc/falcon-boot
 	cp $(EFI) $(EFI_STATION) $(EFI_ESP_JUMP) $(RELEASE_EFI_AA64) \
 		$(BIOS_STAGE1) $(BIOS_STAGE2) \
@@ -109,6 +111,11 @@ release: release-check $(MKSTICK_REL) $(SIGN_STATIC) $(MKSTICK_REL_A64) \
 		$(RELEASE_STAGE)$(RELEASE_DATADIR)/bin/
 	cp $(JUMP_MODS) $(JUMP_MODS:.gz=) $(RELEASE_STAGE)$(RELEASE_DATADIR)/bin/mod/
 	cp $(RELEASE_SHIM) $(RELEASE_STAGE)$(RELEASE_DATADIR)/shim/bins/
+	# The signing appliance, unsigned: mkstick signs it with the stick's
+	# MOK on its way onto p3 (DESIGN Section 7.5).
+	cp $(APPLIANCE_UKI) $(APPLIANCE_UKI_A64) $(APPLIANCE_UKI:.efi=.sources) \
+		$(APPLIANCE_UKI_A64:.efi=.sources) \
+		$(RELEASE_STAGE)$(RELEASE_DATADIR)/appliance/
 	cp $(MEMTEST) $(RELEASE_STAGE)$(RELEASE_DATADIR)/memtest/memtest-i586.bin
 	cp $(MEMTEST_EFI) $(RELEASE_STAGE)$(RELEASE_DATADIR)/memtest/memtest-x86_64.efi
 	cp README.md LICENSE docs/Manual.md docs/DESIGN.md tools/release/THIRD-PARTY.md \
