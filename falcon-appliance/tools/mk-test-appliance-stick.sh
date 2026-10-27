@@ -143,11 +143,15 @@ rm -f "$IMG"
 umask 077
 printf '%s' "$PASS" > "$PASSFILE"
 
-# Both UKIs are signed by mkstick with the stick's own new MOK on the way in.
-# The appliance is listed first so it is the first entry in the loader's UKI
-# chooser; the fixture is there so the chooser exists at all, which is the
-# shape DESIGN Section 7.5 describes (personal OS + signing appliance).
-UKI_ARGS=(--uki "$APPLIANCE_UKI")
+# Both UKIs are signed by mkstick with the stick's own new MOK on the way in:
+# the appliance through --appliance (or --appliance-aa64), as every stick
+# gets one, and the fixture so the chooser exists at all, which is the shape
+# DESIGN Section 7.5 describes (personal OS + signing appliance).
+if [[ -n "$SUFFIX" ]]; then
+    UKI_ARGS=(--appliance-aa64 "$APPLIANCE_UKI")
+else
+    UKI_ARGS=(--appliance "$APPLIANCE_UKI")
+fi
 if [[ -f "$FIXTURE_UKI" ]]; then
     UKI_ARGS+=(--uki "$FIXTURE_UKI")
 else

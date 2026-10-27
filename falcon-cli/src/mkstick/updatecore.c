@@ -14,10 +14,10 @@ void upd_plan_make(const upd_facts *f, upd_plan *p)
         return;
     }
 
-    /* A stick carries its library and shelf beside its boot partition; a
-     * station never does, and a stick never has STATION.INI. */
-    if (f->boot >= 0 && !f->station_ini && f->library >= 0 &&
-        f->shelf >= 0) {
+    /* A stick carries its library beside its boot partition, and a shelf
+     * unless it was made --no-p3; a station never has a library, and a
+     * stick never has STATION.INI. */
+    if (f->boot >= 0 && !f->station_ini && f->library >= 0) {
         p->kind = UPD_STICK;
         p->bios = f->bios_installed;
         p->uefi_stick = f->stick_loader;

@@ -64,9 +64,10 @@ cli_status disk_attach(mks_disk *d);
 /* Detach a loop device attached by disk_attach, popping its cleanup entry. */
 cli_status disk_detach(mks_disk *d);
 
-/* Wait for the kernel and udev to publish the partition nodes. Without it the
+/* Wait for the kernel and udev to publish the first nparts partition nodes
+ * (a stick has two to four, DESIGN Section 3). Without it the
  * first mkfs races udev and fails with a confusing ENOENT. */
-cli_status disk_settle(const mks_disk *d);
+cli_status disk_settle(const mks_disk *d, unsigned nparts);
 
 /* The same wait for one partition node, for a disk whose partitions are not
  * the four of a stick (a station's, or any table status reads). */

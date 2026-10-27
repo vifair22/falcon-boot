@@ -322,7 +322,7 @@ cli_status disk_detach(mks_disk *d)
     return rc;
 }
 
-cli_status disk_settle(const mks_disk *d)
+cli_status disk_settle(const mks_disk *d, unsigned nparts)
 {
     unsigned tries;
 
@@ -335,7 +335,7 @@ cli_status disk_settle(const mks_disk *d)
         unsigned i;
         int all = 1;
 
-        for (i = 0; i < MKS_PARTS; i++) {
+        for (i = 0; i < nparts && i < MKS_PARTS; i++) {
             if (!util_is_block(d->part[i]))
                 all = 0;
         }

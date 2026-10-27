@@ -90,7 +90,7 @@ The personal OS (Section 5) is signed by us end to end.
 
 ## 3. On-disk layout
 
-GPT, four partitions:
+GPT, up to four partitions:
 
 ```
 p1  ESP        FAT32   ~64 MB   loader + shim + MokManager + our public cert; BIOS stage 3 in its reserved sectors
@@ -99,7 +99,13 @@ p3  UKI shelf  LUKS2 -> ext4    ~1 GB   personal-OS UKI + signing-appliance UKI 
 p4  root+home  LUKS2 -> ext4    bulk    real root and home, argon2id keyslot
 ```
 
-A stick is always GPT and always has all four.
+A stick is always GPT. p3 and p4 can be left out: `mkstick create
+--no-p4` makes p1 to p3, a shelf for UKIs and the signing appliance with no
+personal-OS root, and `--no-p3` makes p1 and p2 alone, a stick that boots
+media and nothing else, blessed from a host that keeps the MOK private key
+(`--key-out`, Section 7.5). p4 without p3 is not made: p4 is the root the
+shelf's UKI boots. With no shelf the loaders draw no Personal OS row, as
+they draw none where they find no shelf (5.1).
 The loaders read MBR disks as well (3.2), for the station of Section 12 and
 for the disks a machine already has; nothing makes an MBR stick.
 
@@ -1594,7 +1600,12 @@ built as a portable static binary for both:
    entry and falcon-hook as a UKI with the hooked cmdline (7.2), or takes a
    FreeBSD medium's or memtest86+'s own loader, signs it, stages it with its
    manifest record per Section 8.1, and reboots to the loader. Windows media is reported and left
-   alone.
+   alone. The release ships it unsigned for both machines
+   (`/usr/lib/falcon-boot/appliance/`), and `mkstick create` signs each one
+   the stick has a loader for with the stick's MOK and stages it on an
+   encrypted p3 by default (`--no-appliance` to leave it off). A plaintext
+   p3 gets none: the appliance reads the private key off the encrypted
+   one.
 
 **Residuals:**
 
@@ -2309,7 +2320,8 @@ The device-configuration tooling is ordinary Linux userland C and shells out
 to system tools rather than reimplementing cryptography or filesystem
 creation:
 
-- `falcon-boot-mkstick` (or subcommands): partition (GPT), format p1 FAT32 and
+- `falcon-boot-mkstick` (or subcommands): partition (GPT; p3 and p4 unless
+  `--no-p3` or `--no-p4`, Section 3), format p1 FAT32 and
   p2 exFAT (`mkfs.fat`, `mkfs.exfat`; `mkfs.fat -F 32` for `--p2-fs
   fat32`), and create p3/p4 via `cryptsetup
   luksFormat` with the correct KDF per partition (argon2id at the stick's
@@ -2336,6 +2348,15 @@ creation:
   the stage 3 the build has, rounded up to a whole MiB and at least one,
   so a later, larger stage 3 installs without reformatting p1. `mkstick
   create` refuses a disk carrying any MBR or GPT table without `--force`.
+- `mkstick create` with no target asks instead: the drive, from a list
+  that puts removable disks first and refuses one this machine is using
+  (mounted, swapped on, or under a mapping) or boots from; the drive's
+  name typed back; the partitions; the AArch64 and BIOS loaders; the MOK;
+  the passphrase; the UKIs; filesystems and sizes. The answers are made
+  into `create`'s own arguments, printed in the summary, and parsed and
+  run as typed ones are, so every stick it makes has a command line. A
+  BIOS loader is `mkstick bios` run after; the first-boot enrollment is
+  printed at the end.
 - `mkstick bios` installs falcon-bios by the layout of Section 3.3, finding
   the boot partition by its record as stage 2 does, backing up exactly the
   sectors it writes and restoring them on `--remove`. `mkstick status`
