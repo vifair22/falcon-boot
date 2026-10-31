@@ -4047,10 +4047,12 @@ then add the repository to `/etc/pacman.conf` and install:
 
     sudo pacman -Sy falcon-boot-bin
 
-**Gentoo.** `app-misc/falcon-boot-bin` is in vifair-overlay. Its source is
-the release in this project's package registry, which is private: the
-binhost that builds it holds a read-only deploy token for `git.airies.net`,
-and machines install the binary package it builds.
+**Gentoo.** `app-misc/falcon-boot-bin` is in vifair-overlay. The same
+job puts the main tarballs in `https://dl.airies.net/falcon/src/`, once per
+version and never replaced, then `falcon-boot.latest` there naming the
+version. The overlay's daily bumper polls that file and opens the bump
+merge request, its Manifest made from those tarballs. Machines install the
+binary package the binhost builds from it.
 
 ### 14.4 Building a release
 

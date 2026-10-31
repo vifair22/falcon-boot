@@ -11,9 +11,14 @@
 # repository key, whose public half is published beside them as
 # falcon/falcon.asc. The repository holds the current version alone.
 #
+# The main tarballs go to https://dl.airies.net/falcon/src too, once per
+# version and never overwritten, then falcon-boot.latest naming the version:
+# vifair-overlay's bumper polls that pointer and fetches the tarballs from
+# there for app-misc/falcon-boot-bin (its files/bumper.conf).
+#
 # The push uses a deploy key that the dl host's forced command lets do one
-# thing, rsync into airies-dl/arch, and the host key pinned in
-# tools/release/dl-known-hosts.
+# thing, rsync into airies-dl/arch or airies-dl/falcon/src, and the host key
+# pinned in tools/release/dl-known-hosts.
 #
 # Usage: tools/release/publish-arch.sh RELEASE_DIR
 # Env:   FALCON_ARCH_GPG_PRIVATE_KEY  the signing key, armored (a file path)
@@ -33,6 +38,7 @@ KEY=${FALCON_ARCH_GPG_PRIVATE_KEY:?the signing key}
 KEYID=${FALCON_ARCH_GPG_KEY_ID:?the signing key fingerprint}
 DL_HOST=root@172.20.0.50
 DL_PATH=/mnt/cache/appdata/airies-dl/arch/falcon
+DL_SRC=/mnt/cache/appdata/airies-dl/falcon/src
 
 for a in "${ARCHES[@]}"; do
     [[ -f $REL/falcon-boot-$VER-$a.tar.gz ]] ||
@@ -95,7 +101,18 @@ printf '\n' >> "$sshkey"
 trap 'rm -f "$OUT/key.asc" "$sshkey"' EXIT
 # -L: the database's .db and .files are symlinks repo-add makes; the dl
 # server is given files.
-rsync -rtL --delete \
-    -e "ssh -i $sshkey -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$PWD/tools/release/dl-known-hosts" \
-    "$OUT/repo/" "$DL_HOST:$DL_PATH/"
+ssh_cmd="ssh -i $sshkey -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$PWD/tools/release/dl-known-hosts"
+rsync -rtL --delete -e "$ssh_cmd" "$OUT/repo/" "$DL_HOST:$DL_PATH/"
 echo "publish-arch: falcon-boot-bin $VER published to https://dl.airies.net/arch/falcon/{x86_64,aarch64}"
+
+# The overlay's Manifest is the review of these bytes, so a version once
+# published is never replaced; the pointer goes last, naming only what is
+# there.
+srcs=()
+for a in "${ARCHES[@]}"; do
+    srcs+=("$REL/falcon-boot-$VER-$a.tar.gz")
+done
+printf '%s\n' "$VER" > "$OUT/falcon-boot.latest"
+rsync -t --ignore-existing --chmod=F644 -e "$ssh_cmd" "${srcs[@]}" "$DL_HOST:$DL_SRC/"
+rsync -t --chmod=F644 -e "$ssh_cmd" "$OUT/falcon-boot.latest" "$DL_HOST:$DL_SRC/"
+echo "publish-arch: falcon-boot $VER tarballs and pointer at https://dl.airies.net/falcon/src"
