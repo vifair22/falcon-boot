@@ -47,6 +47,9 @@ STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
           # The same on an i686: no long mode, so the 32-bit ISOs
           # (corpus.tsv, arch) and nothing else.
           ('bios32', 'BIOS, i686'),
+          # That i686 with SSE2, PAE and NX: the same ISOs, on the processor
+          # Windows 8 and later x86 ask for (falcon-bios/src/win/win.c).
+          ('bios32-sse2', 'BIOS, i686 SSE2'),
           # The AArch64 machine (tools/coverage/states.sh): the arm64 ISOs
           # and nothing else, run on request. Shown once a case has run.
           ('a64-off', 'AArch64 SB off'), ('a64-ms', 'AArch64 SB on, MS CA'),
@@ -130,6 +133,11 @@ def main():
     w('BIOS, i686 is the same machine without a 64-bit mode, and is')
     w('where the 32-bit ISOs are judged; they are N/A under UEFI, whose loader')
     w('is x86-64, and the 64-bit ISOs are N/A there.')
+    w('BIOS, i686 SSE2 runs the same ISOs on a processor with SSE2, PAE and')
+    w('NX and still no 64-bit mode. BIOS, i686 is the Pentium III floor, with')
+    w('neither SSE2 nor NX, so Windows 8 and later x86 failing there while')
+    w('checking the processor is the expected result (`win_cpu_lacks`,')
+    w('`falcon-bios/src/win/win.c`); BIOS, i686 SSE2 is where they are judged.')
     w('')
     w('The headline columns are Secure Boot off and Secure Boot on where db')
     w('trusts the Microsoft CA. Secure Boot on with only the stick owner\'s')
@@ -194,8 +202,9 @@ def main():
                 if v in ('FAIL', 'ERROR') or (v == 'REFUSED' and rt == 'blessed'):
                     fails.append((r['id'], st, rt, v, res['reason']))
             applies[st] = not verdicts or any(v != 'N/A' for v in verdicts)
-            if st in ('off', 'moksb', 'bios', 'bios32', 'a64-off'):
-                # SB off, validation off and both BIOS columns headline the
+            if st in ('off', 'moksb', 'bios', 'bios32', 'bios32-sse2',
+                      'a64-off'):
+                # SB off, validation off and the BIOS columns headline the
                 # drop route: it is the product's default, and the headline
                 # is what it does.
                 ok[st] = (result(r['id'], st, 'dnd') or {}).get(
@@ -220,8 +229,9 @@ def main():
                  'a64-own': 'AArch64 SB on, own keys'}
     w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
       'SB on, own keys | SB on, validation off, drop | BIOS, drop | '
-      'BIOS, i686, drop |' + ''.join(' %s |' % a64_names[st] for st in a64))
-    w('|---|---|---|---|---|---|---|---|---|---|' + '---|' * len(a64))
+      'BIOS, i686, drop | BIOS, i686 SSE2, drop |'
+      + ''.join(' %s |' % a64_names[st] for st in a64))
+    w('|---|---|---|---|---|---|---|---|---|---|---|' + '---|' * len(a64))
     def frac(t, st):
         passed, n = t.get(st, (0, 0))
         return '%d/%d (%d%%)' % (passed, n, 100 * passed // n) if n else '-'
@@ -229,12 +239,13 @@ def main():
     for tier in sorted(tally):
         t = tally[tier]
         toff, tms = TARGETS.get(tier, (None, None))
-        w('| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s |'
+        w('| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |'
           % (tier, t['n'], frac(t, 'off'),
              '%d%%' % toff if toff else '-',
              frac(t, 'ms'), '%d%%' % tms if tms else '-',
              frac(t, 'own'), frac(t, 'moksb'), frac(t, 'bios'),
-             frac(t, 'bios32')) + ''.join(' %s |' % frac(t, st) for st in a64))
+             frac(t, 'bios32'), frac(t, 'bios32-sse2'))
+          + ''.join(' %s |' % frac(t, st) for st in a64))
     w('')
     w('## Matrix')
     w('')
