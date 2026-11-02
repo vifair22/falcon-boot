@@ -29,6 +29,16 @@ tar xzf falcon-boot-X.Y.Z-<arch>.tar.gz
 sudo cp -r falcon-boot-X.Y.Z/usr/. /usr/
 ```
 
+`falcon-boot-mkstick` uses standard Linux tools to partition and format the stick, and `create` stops and names the first one it can't find. You'll need these on your `PATH` (the `falcon-boot-bin` package installs them for you):
+
+- `sgdisk`, from `gdisk` on Debian and Ubuntu or `gptfdisk` on Arch.
+- `mkfs.fat` from `dosfstools`, `mkfs.exfat` from `exfatprogs`, and `mkfs.ext4` from `e2fsprogs`.
+- `cryptsetup` and `openssl`.
+- `sbsign`, from `sbsigntool` on Debian and Ubuntu or `sbsigntools` on Arch.
+- `losetup`, `mount` and `umount`, which almost every Linux system already has.
+
+You only need `mkfs.btrfs` (from `btrfs-progs`) or `mkfs.xfs` (from `xfsprogs`) if you choose that filesystem for p3.
+
 Then run the guided install to make a stick:
 
 ```sh
@@ -165,7 +175,7 @@ make run             # the test stick under QEMU/OVMF with a display window
 
 The rigs (`make test-stick`, `test-core`, `test-station*`, `test-tpm-rig`, `test-jump`, `test-bios-img` and the rest) are listed in Manual Section 13. The corpus runs in the same container, through `tools/coverage/harness.sh` with no command, and that's how the measurements in `docs/coverage.md` are made.
 
-The pipeline (`.gitlab-ci.yml`) runs every merge request through the tests (with JUnit reports), `make analyze`, the coverage gate and the build. A merge request into `master` is a release shipping, so it also runs every rig and the corpus under all six states, and it fails if any scorecard cell that passes on `master` no longer does (`tools/coverage/scorecard-diff.py`).
+The pipeline (`.gitlab-ci.yml`) runs every merge request through the tests (with JUnit reports), `make analyze`, the coverage gate and the build. A merge request into `master` is a release shipping, so it also runs the rigs listed in `.gitlab-ci.yml` and the corpus under all six states, and it fails if any scorecard cell that passes on `master` no longer does (`tools/coverage/scorecard-diff.py`). `test-devlink` isn't one of those rigs, because DevLink is a separate tool outside the release.
 
 `make install` builds `falcon-boot-mkstick` and `falcon-boot-sign` and copies them into `/usr/local/bin`, and it honors `PREFIX` and `DESTDIR`. `make uninstall` removes them.
 

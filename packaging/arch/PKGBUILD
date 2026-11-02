@@ -23,6 +23,11 @@ depends=(
     sbsigntools
     util-linux
 )
+# The shelf filesystems the guided install offers beyond ext4 and FAT32.
+optdepends=(
+    'btrfs-progs: a btrfs p3 (--p3-fs btrfs)'
+    'xfsprogs: an xfs p3 (--p3-fs xfs)'
+)
 # The programs are static and ship stripped; the loaders are PE images whose
 # bytes are what the MOK signs.
 options=(!strip !debug)
