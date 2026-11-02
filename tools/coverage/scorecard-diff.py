@@ -3,12 +3,13 @@
 
 Usage: scorecard-diff.py [--cases] BASELINE NEW
 
-Reads the Matrix table of each and lists every cell that changed. A cell
-that read PASS in BASELINE and reads anything else in NEW is a regression,
-and so is a baseline PASS whose ISO or column NEW does not have: the release
-gate runs every state, so a missing cell is a case that did not run. Exit 1
-when there is a regression, 0 otherwise. New ISOs and new columns are
-listed and do not fail.
+Reads the Matrix table of each and lists what the release evaluation asks:
+what regressed, what improved, what else changed, what was added and what
+was dropped. A cell that read PASS in BASELINE and reads anything else in NEW
+is a regression, and so is a baseline PASS whose ISO or column NEW does not
+have: the release gate runs every state, so a missing cell is a case that did
+not run. A cell that reached PASS improved. Exit 1 when there is a regression,
+0 otherwise; nothing else fails.
 
 --cases prints only the regressions, one `ID STATE ROUTE` per line in
 run-corpus.sh's terms, for a caller that reruns them alone before it calls
@@ -59,7 +60,9 @@ def main():
     base, base_cols = matrix(args[0])
     new, new_cols = matrix(args[1])
 
-    regressed, changed, rerun = [], [], []
+    dropped = sorted(set(base) - set(new))
+    dropped_cols = [c for c in base_cols if c not in new_cols]
+    regressed, improved, changed, rerun = [], [], [], []
     for iso, cells in base.items():
         for col in base_cols:
             was = cells.get(col, "")
@@ -67,24 +70,32 @@ def main():
             if was == now:
                 continue
             line = f"{iso:32} {col:36} {was} -> {now}"
-            (regressed if was == "PASS" else changed).append(line)
-            if was == "PASS" and col in COLUMNS:
-                rerun.append("%s %s %s" % ((iso,) + COLUMNS[col]))
+            if was == "PASS":
+                regressed.append(line)
+                if col in COLUMNS:
+                    rerun.append("%s %s %s" % ((iso,) + COLUMNS[col]))
+            elif iso in dropped or col in dropped_cols:
+                continue  # Named once below, not cell by cell.
+            else:
+                (improved if now == "PASS" else changed).append(line)
     if cases:
         print("\n".join(rerun))
         return 1 if regressed else 0
     added = sorted(set(new) - set(base))
     added_cols = [c for c in new_cols if c not in base_cols]
 
-    for title, lines in (("Regressed", regressed), ("Changed", changed)):
+    for title, lines in (("Regressed", regressed), ("Improved", improved),
+                         ("Changed", changed)):
         if lines:
             print(f"{title} ({len(lines)}):")
             print("\n".join(f"  {l}" for l in lines))
-    if added:
-        print(f"New ISOs: {', '.join(added)}")
-    if added_cols:
-        print(f"New columns: {', '.join(added_cols)}")
-    if not (regressed or changed or added or added_cols):
+    for title, names in (("Added ISOs", added), ("Added columns", added_cols),
+                         ("Dropped ISOs", dropped),
+                         ("Dropped columns", dropped_cols)):
+        if names:
+            print(f"{title} ({len(names)}): {', '.join(names)}")
+    if not (regressed or improved or changed or added or added_cols
+            or dropped or dropped_cols):
         print("No cell changed.")
     return 1 if regressed else 0
 
