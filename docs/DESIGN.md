@@ -3141,7 +3141,8 @@ sequenceDiagram
     L->>L: grub.cfg: one extent, at most 256 KiB, not a loopback entry
     L->>L: build_map, hook cpio with /falcon/map in 2048-byte blocks
     L->>L: grubcfg_write: same length as the original, comment-padded
-    L->>L: overlay: our cfg at its offset, hook blocks appended past the ISO's end
+    L->>L: the same for every other grub.cfg path GRUB looks in, one extent with room for ours
+    L->>L: overlay: our cfgs at their offsets, hook blocks appended past the ISO's end
     L->>L: FalconIsoMap
     L->>F: virtual CD, ConnectController (El Torito, FAT)
     L->>S: LoadImage EFI\BOOT\BOOTX64.EFI off the boot image
@@ -3168,9 +3169,13 @@ menuentry 'falcon-boot' {
 }
 ```
 
-Best-effort (Section 7.2): a GRUB whose embedded prefix reads a different
-configuration first, or sets `$root` to a partition rather than the CD,
-never sees ours.
+Every copy is replaced because the one GRUB reads is in its embedded prefix:
+Bazzite's bootcfg entry comes from `/boot/grub2/grub.cfg`, and its GRUB reads
+`/EFI/BOOT/grub.cfg`.
+
+Best-effort (Section 7.2): a GRUB whose embedded prefix reads any other
+configuration first, or sets `$root` to a partition rather than the CD, never
+sees ours.
 
 #### 11.2.12 BSD: a BSD medium as its own memory disk
 
