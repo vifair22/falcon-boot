@@ -195,7 +195,7 @@ in `docs/coverage.md` are made.
 The pipeline (`.gitlab-ci.yml`) runs every merge request through the tests
 (with JUnit reports), `make analyze`, the coverage gate and the build. A
 merge request into `master`, which is a release branch shipping, also runs
-every rig and the corpus under all six states, and fails if any scorecard
+every rig and the corpus under every state, and fails if any scorecard
 cell that passes on `master` no longer does
 (`tools/coverage/scorecard-diff.py`).
 

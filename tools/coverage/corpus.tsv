@@ -16,8 +16,9 @@
 #   arch      optional: i686 for a 32-bit ISO, aarch64 for an arm64 one,
 #             absent for x86_64. A 32-bit ISO runs in the BIOS columns only
 #             (the UEFI loader is x86-64 and has no blessed route to offer
-#             it), and a 64-bit one is not run in bios32, the i686 column,
-#             where its kernel is refused by design. An arm64 ISO runs in the
+#             it), and a 64-bit one is not run in bios32 or bios32-sse2, the
+#             i686 columns, where its kernel is refused by design. An arm64
+#             ISO runs in the
 #             a64 columns only, and nothing else does
 #
 # Rows are added as a family is worked on. A row is removed only when its URL
@@ -80,6 +81,9 @@ debian-netinst-12.15-i386	B	debian-installer	71506f6fa501d4ad50d0835666f5102e9c9
 # no DHCP lease, so the harness reads them as a timeout with a screenshot:
 # read the screenshot before believing the FAIL.
 windows-10-22h2-x86	A	windows	ac0b7045b6c3a72a4d46daab0944e109a55d9ede3a11b775fdb57c2dd3fca2ef	windows-10-22h2-x86.iso	local:Windows 10 22H2 x86 (Win10_22H2_English_x32v1.iso), from Microsoft's download page (no stable URL)	i686
+# The 64-bit build, beside the 32-bit one: no arch, so it runs in the columns
+# of the 64-bit ISOs and not in the rest of this block's.
+windows-10-22h2-x64	A	windows	a6f470ca6d331eb353b815c043e327a347f594f37ff525f17764738fe812852e	windows-10-22h2-x64.iso	local:Windows 10 22H2 x64 (Win10_22H2_English_x64v1.iso), from Microsoft's download page (no stable URL)
 freedos-1.4-live	C	freedos	c48a9dcf4b8e22f44e268a9879745f0bd88c061195ac584e6ef2deb0477f81fb	FD14LIVE.iso	local:FD14LIVE.iso from https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.4/FD14-LiveCD.zip (zip sha256 2020ff6bb681967fd6eff8f51ad2e5cd5ab4421165948cef4246e4f7fcaf6339)	i686
 reactos-0.4.16	C	reactos	6f15ca6e1edf5527b8489958d16c54f0da0e7948c305d7c89e74687c6cbf6855	ReactOS-0.4.16-i386.iso	local:ReactOS-0.4.16-i386.iso from https://github.com/reactos/reactos/releases/download/0.4.16-release/ReactOS-0.4.16-i386.zip (zip sha256 e5851510cf5b79ef51a76b8155dd5ef7faca1155f44d0a1d41c35b77ece4ce2a)	i686
 freebsd-disc1-14.5-i386	C	freebsd	697280ea21c3c17d82391429a93d817f6cc0e14339802b2568fe27d2dbc9df1d	FreeBSD-14.5-RELEASE-i386-disc1.iso	https://download.freebsd.org/releases/i386/i386/ISO-IMAGES/14.5/FreeBSD-14.5-RELEASE-i386-disc1.iso	i686

@@ -21,9 +21,10 @@
 #   --states "off ms own"     which states (default the three headline Secure
 #                             Boot ones; `moksb`, Secure Boot on with shim's
 #                             validation off, is run on request, since a
-#                             state is a full pass over the corpus; `bios`
-#                             and `bios32` are the SeaBIOS columns and are
-#                             not among them either, so they are asked for
+#                             state is a full pass over the corpus; `bios`,
+#                             `bios32` and `bios32-sse2` are the SeaBIOS
+#                             columns and are not among them either, so
+#                             they are asked for
 #                             by name; so are `a64-off a64-ms a64-own`,
 #                             the AArch64 columns, emulated and slow)
 #   --routes "dnd chain blessed"  which routes (default all three)
@@ -156,8 +157,8 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
                     > "$out/result"
                 continue
             fi
-            # Width: the UEFI loader is x86-64, and the i686 column
-            # has no long mode for a 64-bit kernel.
+            # Width: the UEFI loader is x86-64, and the i686 columns
+            # have no long mode for a 64-bit kernel.
             if [[ "$arch" == i686 && "$st" != bios* ]]; then
                 mkdir -p "$out"
                 printf 'N/A\ta 32-bit ISO; the UEFI loader is x86-64\t0\n' \
@@ -178,7 +179,7 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
                     > "$out/result"
                 continue
             fi
-            if [[ "$arch" != i686 && "$st" == bios32 ]]; then
+            if [[ "$arch" != i686 && "$st" == bios32* ]]; then
                 mkdir -p "$out"
                 printf 'N/A\ta 64-bit ISO on a processor without long mode\t0\n' \
                     > "$out/result"
