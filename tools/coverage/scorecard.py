@@ -32,6 +32,9 @@ import sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 MANIFEST = os.path.join(ROOT, 'tools', 'coverage', 'corpus.tsv')
 RUNS = os.path.join(ROOT, 'build', 'coverage', 'runs')
+# The spinner's private-use glyphs (falcon-core/src/tui/tui.h, TUI_SPIN0), which
+# reach a reason through the serial transcript.
+SPINNER = dict.fromkeys(range(0xE000, 0xE004))
 
 STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
           # Secure Boot on with shim's validation off (MokSBState, DESIGN
@@ -84,7 +87,8 @@ def result(case_id, state, route):
             parts = f.readline().rstrip('\n').split('\t')
     except OSError:
         return None
-    r = {'verdict': parts[0], 'reason': parts[1] if len(parts) > 1 else '',
+    r = {'verdict': parts[0],
+         'reason': parts[1].translate(SPINNER) if len(parts) > 1 else '',
          'secs': parts[2] if len(parts) > 2 else '', 'loader': ''}
     try:
         with open(os.path.join(d, 'loader')) as f:
