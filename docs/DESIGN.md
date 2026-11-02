@@ -34,7 +34,7 @@ change it.
    not ship its own signed chain requires the optional `sign` bless step; see
    Section 7.)
 3. Booting a personal OS: a Unified Kernel Image (UKI) sitting on a small
-   LUKS2 partition (ext4 inside, or FAT32), whose initramfs then unlocks the real root/home on a
+   LUKS2 partition (ext4 inside, or FAT32, btrfs or xfs), whose initramfs then unlocks the real root/home on a
    second LUKS2 partition and pivots into it.
 4. Chaining through Fedora's shim-x64 16.1 (dual MS-signed, 2011 + 2023
    CAs; Section 4): Secure Boot upheld when
@@ -60,11 +60,11 @@ change it.
    Linux as UKIs on a shelf, memtest86+, on MBR and GPT disks, with a
    `STATION.INI`; and station-legacy, the BIOS station with falcon jump's
    CD, CF and USB routes. Chosen at compile time, so the stick's parsers are
-   not in it at all. Section 13.
+   not in it at all. Section 12.
 8. **A boot floppy, falcon jump.** A third BIOS loader, on a FAT12 floppy
    that stays in an old machine's drive: it boots the machine's disks and
    memtest86+, and the CD and USB sticks that machine's BIOS cannot boot,
-   loading a driver off the floppy only for the route chosen. Section 14.
+   loading a driver off the floppy only for the route chosen. Section 13.
 
 ### Non-goals
 
@@ -368,7 +368,8 @@ installers warn when a `boot` partition or a shelf would sit past 8 GB or
 
 ## 4. ESP contents and the Secure Boot chain
 
-p1 holds exactly four files. Section 4.3 says why that list is closed.
+p1 holds exactly the files in this table: seven, or four without the
+AArch64 chain (`--no-aa64`). Section 4.3 says why that list is closed.
 A stick goes through shim by default: it boots machines whose firmware
 keys are not its owner's, and shim is what their db trusts. A station
 does not (12.2): it is the machine's own, its cert goes into the
@@ -483,7 +484,7 @@ for this reason.
 
 ### 4.3 The ESP is not a storage location
 
-p1 holds the four files in the table above and nothing else: no backups,
+p1 holds the files in the table above and nothing else: no backups,
 TPM event logs, dumps, notes or ISOs.
 
 - It is vfat with no journal, written by firmware and by every OS that
@@ -667,6 +668,7 @@ small, and it is what has to be right for the stick to boot.
 | `/uki/<name>.efi` | every bootable UKI: the personal OS, its rollback, the signing appliance | the loader's shelf scan |
 | `/vmlinuz-<kernel>` | one plain kernel copy per installed kernel | mkinitcpio, never the loader |
 | `/lost+found` | ext4's own, on an ext4 shelf | the filesystem |
+| `/.falcon` | the identity record of a `--p3-plain` shelf, which holds no `falcon-mok.key`; a LUKS2 shelf's is a token in its header (Section 3.1) | the loader and the appliance |
 
 **The kernel copies are load-bearing.** Arch's `linux` package ships the
 kernel only at `usr/lib/modules/<kver>/vmlinuz`, and mkinitcpio's pacman
@@ -679,10 +681,11 @@ next upgrade rebuilds nothing, silently.
 `falcon-core/src/media/shelf.c` matches on the `.efi` suffix and nothing
 else. A file named `appliance-uki.efi.prev` is not a rollback:
 the loader will never offer it, and it is recoverable only by unlocking p3
-from another machine and renaming it. A rollback has to end in `.efi`, and
-its name decides where it falls in the chooser's sort, which is plain
-ordering by name: `-` is 0x2D and `.` is 0x2E, so `arch-usb-prev.efi` sorts
-before `arch-usb.efi`.
+from another machine and renaming it. A rollback has to end in `.efi`. The
+chooser puts the newest `.uname` first and an image named `appliance*` last
+(`uki_before`). Images with the same `.uname` stay in name order, and those
+with none follow it in name order: `-` is 0x2D and `.` is 0x2E, so
+`arch-usb-prev.efi` sorts before `arch-usb.efi`.
 
 **Not on the shelf:** ISO images, captures, notes, and backups of anything
 that can be rebuilt (the signing appliance is built from this repository and
@@ -2618,7 +2621,7 @@ while every real file lives only in UDF.
   loader's), `falcon-cli` (the host tools, Section 8), `falcon-appliance` (the
   signing appliance, Section 7.5), `falcon-hook` (Section 6.4),
   `falcon-winjump` and `falcon-vdisk` (Section 6.3). One non-recursive
-  Makefile builds them all; CLAUDE.md has the directory-by-directory map. The loader's modules, named by directory, with
+  Makefile builds them all; AGENTS.md has the directory-by-directory map. The loader's modules, named by directory, with
   the core modules they lean on:
   - `console` - the display falcon-core's screens are drawn on
     (`display.c`, Section 7.10): Simple Text Output and Input, the text
@@ -4053,7 +4056,7 @@ Each build has one job:
 | stick | boots media: ISOs, blessing, Windows installers | UEFI, BIOS |
 | station | is the machine's boot loader, in place of GRUB, systemd-boot or the Windows MBR | UEFI, BIOS |
 | station-legacy | the station, plus jump's drivers and routes (CD, CF in a PC Card slot, USB) for a machine whose BIOS cannot boot them | BIOS |
-| jump | a boot floppy, for a machine falcon is not installed on (Section 14) | BIOS |
+| jump | a boot floppy, for a machine falcon is not installed on (Section 13) | BIOS |
 
 The station boots:
 
@@ -4276,9 +4279,9 @@ and the caller's DL, except after AH=08h and AH=15h, which answer in DL
 answered for the swapped numbers, which is what the booted system asks.
 The BDA's disk count is left alone, since both disks exist either way, and
 so are the fixed disk parameter tables behind INT 41h and 46h, which
-nothing in scope reads for a disk INT 13h answers for. falcon jump's CF and
-USB routes install the same swap, through `chain_disk`, under a disk with
-no falcon record (13.6).
+nothing in scope reads for a disk INT 13h answers for. falcon jump's CF
+route installs the same swap, through `chain_disk`, under a card with no
+falcon record (13.6).
 
 BIOS machines are taken to have no TPM sealing: the BIOS measured falcon's
 MBR, not Windows', and nothing on BIOS can hand that back.
@@ -4603,7 +4606,8 @@ BIOS cannot boot from.
 
 ### 12.11 The rig
 
-Every cell of the station matrix has a rig case.
+Every cell of the station matrix has a rig case but the three this section
+ends with.
 
 The UEFI station's are `make test-station-uefi`
 (`falcon-efi/tools/run-station-rig.sh`), each under OVMF with Secure Boot
@@ -4798,8 +4802,9 @@ The constraints the station keeps:
 
 There are two ways, and neither reinstalls. `mkstick update` runs on Linux
 beside a build and updates both halves of a station, and a stick too. The
-station bundle is the BIOS half alone, carried to a machine that has only
-DevLink recovery.
+station bundle is the BIOS half alone, carried to a machine with no build:
+any Linux with the disk attached, or DevLink recovery where it is installed
+(an optional, separate tool).
 
 **mkstick update.** `mkstick update <disk>` decides what the disk is from
 its records (`falcon-cli/src/mkstick/updatecore.c`, host-tested), says
@@ -5155,7 +5160,8 @@ IDE drive, a falcon stick in a USB port, and a CompactFlash card in a PC
 Card slot. It is a third loader app beside the stick and the station, built
 from falcon-bios's modules plus the drivers this section adds. `make jump`
 builds it and `make test-jump` boots every route under SeaBIOS (13.9);
-Section 11.6 draws it.
+Section 11.6 draws it. The `PCC` route, station-legacy's too, is experimental
+and outside the compatibility promise.
 
 ### 13.1 What it boots, and what it does not
 
@@ -5165,7 +5171,7 @@ Section 11.6 draws it.
 | `MEM` | memtest86+ off the floppy, through the x86 boot protocol (`linux.c`) | nothing loaded |
 | `CDR` | the CD in an IDE drive, El Torito no-emulation or floppy emulation | `ATA.MOD`, resident |
 | `USB` | a falcon stick in a USB port, as the next BIOS disk | a host controller module (`EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD`), resident |
-| `PCC` | a CompactFlash card in a PC Card slot (a CF-to-PC Card adapter), as a disk | `PCC.MOD`, resident |
+| `PCC` | experimental: a CompactFlash card in a PC Card slot (a CF-to-PC Card adapter), as a disk | `PCC.MOD`, resident |
 
 Not in scope:
 

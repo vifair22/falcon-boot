@@ -113,8 +113,8 @@ refused (Section 1.4) is yellow, and selected, a brown bar.
 | Enter | boot the row, open the folder, go up on `..` |
 | `c` | an `.iso` or `.img` row: boot the medium's own loader (`CHN`; `IMG` for a `.img` on UEFI). Any other row: as Enter |
 | `d` | as Enter; on a blessed row, the ISO's default route without the blessing |
-| `b` | UEFI. An image row: bless it. Any other row: as Enter |
-| `a` | UEFI. Bless every image on the stick that can be blessed and is not, from any row |
+| `b` | UEFI. An `.iso` row: bless it. An `.img` or `.efi` row: says only an `.iso` is blessed. Any other row: as Enter |
+| `a` | UEFI. Bless every `.iso` on the stick that can be blessed and is not, from any row |
 | Escape | in a folder, go up one; at the root, leave the menu (Section 1.6) |
 
 On a blessed row Enter boots the blessing; `c` and `d` boot the ISO as if it
@@ -704,6 +704,10 @@ A blessed EFI shell starts with Secure Boot on, but every program started
 from it is refused with `The image is not an application.` (shim's loader,
 `docs/DESIGN.md` Section 7.6). Use the shell with Secure Boot off.
 
+ESXi needs Secure Boot off, or validation off, where `c` fails on ESXi 8. It
+cannot be blessed: it has no Linux kernel to wrap, so `Bless the media` on
+its refused page does not apply.
+
 ## 4. Blessing
 
 Blessing signs an ISO's boot with the stick's MOK so it boots with Secure
@@ -729,8 +733,8 @@ On the UEFI loader:
 
 | key | blesses |
 |---|---|
-| `b` | the image row it is pressed on; on any other row it acts as Enter |
-| `a` | every image on p2 not freshly blessed, from any row |
+| `b` | the `.iso` row it is pressed on; on an `.img` or `.efi` row it says only an `.iso` is blessed; on any other row it acts as Enter |
+| `a` | every `.iso` on p2 not freshly blessed, from any row |
 
 Neither takes a Windows ISO, an image tagged `{BIOS ONLY}`, or one already
 blessed. The loader reads the images first (a `reading N images` step when
@@ -761,7 +765,7 @@ Nothing to bless is one of:
 
 | page | when |
 |---|---|
-| `Nothing new to bless.` | `a`, and every image is blessed or not blessable |
+| `Nothing new to bless.` | `a`, and every `.iso` is blessed or not blessable |
 | `This image is already blessed.` | `b` on a blessed row |
 | `This image boots only on a BIOS machine, where it needs no blessing.` | `b` on a `{BIOS ONLY}` row |
 | `Only a Linux or other non-Windows .iso is blessed. Windows media boots as it is: select it and press enter.` | `b` on Windows media, or anything else not blessable |
@@ -1640,6 +1644,7 @@ The UEFI station can show a six-digit TOTP code, released by the
 machine's TPM (2.0 or 1.2) only while the firmware, its settings and the
 boot chain are what they were at enrollment. Compare it with an
 authenticator before typing a passphrase (`docs/DESIGN.md` Section 12.15).
+The BIOS station has no TOTP check.
 The code is a label; the station boots the same either way.
 
 Enroll from a system the station started, on the station's machine:
@@ -1717,7 +1722,7 @@ falcon-boot-mkstick station install /dev/X --bios --legacy \
 
 `--legacy` takes the station-legacy stage 3 and copies `ATA.MOD`,
 `EHCI.MOD`, `UHCI.MOD`, `OHCI.MOD` and `PCC.MOD` from `--mods` (default
-`build/bin/mod`) into the station partition, printing `warning: no <NAME>.MOD in
+`build/bin/mod`, `/usr/lib/falcon-boot/bin/mod` in a release) into the station partition, printing `warning: no <NAME>.MOD in
 <dir>; not copied` for one that is missing. Each `--uki` goes into the
 station partition's `/uki`.
 
@@ -1726,7 +1731,7 @@ It adds, after the partition and disk rows and in jump's order:
 | row | name | there when |
 |---|---|---|
 | `CD drive` | `cd` | `ATA.MOD` is in the station partition and an IDE controller is on the PCI bus |
-| `CF card (PC Card)` | `cf` | `PCC.MOD` is there and a CardBus bridge is on the bus |
+| `CF card (PC Card)`, experimental (Section 9) | `cf` | `PCC.MOD` is there and a CardBus bridge is on the bus |
 | `USB stick` | `usb` | `EHCI.MOD`, `UHCI.MOD` or `OHCI.MOD` is there and its controller is on the bus |
 | one per UKI in `/uki` | `uki-<stem>` | always; labelled by its `.osrel` name, booted as `POS` with no prompt |
 
@@ -1735,7 +1740,8 @@ station's, with the route's code as the word: `CDR failed while <stage>`.
 `STATION.INI` relabels, hides, orders and names these rows as it does any
 found row (Section 8).
 
-**DevLink recovery** is a UKI for `/uki`, built by `make devlink-uki`
+**DevLink recovery** is optional: devlink-rescue is a separate tool, outside
+the release. It is a UKI for `/uki`, built by `make devlink-uki`
 into `build/devlink/devlink-recovery.efi` from devlink-rescue's kernel and
 initrd (`DEVLINK_IMAGES=<dir>` names another build's images; default
 `~/git/home/devlink-rescue/build/classic/images`). Its row reads `DevLink
@@ -1750,8 +1756,7 @@ releases jump's resident before it hands over.
 Two ways, neither a reinstall (`docs/DESIGN.md` Section 12.14). From Linux
 beside a build, `falcon-boot-mkstick update /dev/X` brings both halves of a
 station to the build (Section 10.7). For a BIOS
-station on a machine with nothing but DevLink recovery, use a station
-bundle.
+station on a machine with no build, use a station bundle.
 
 ```sh
 tools/coverage/harness.sh make station-bundle [MEMTEST=<memtest86+>]
@@ -1774,7 +1779,7 @@ station-bundle` refuses one. The tarball holds one directory,
 | `VERSION`, `MANIFEST` | the version, and every file's SHA-256 |
 
 On the machine it needs `sh`, `tar`, `sha256sum` and mtools. From DevLink
-recovery:
+recovery, where it is installed (7.7):
 
     devlink put falcon-station-<version>.tar.gz /tmp/ --force
     devlink exec 'cd /tmp && gunzip -c falcon-station-<version>.tar.gz |
@@ -1995,7 +2000,8 @@ falcon jump (`docs/DESIGN.md` Section 13) is a 1.44 MB boot floppy for an
 old BIOS machine: it boots the machine's disks, memtest86+, and, through
 drivers read off the floppy, the disc in an IDE CD drive, a falcon stick on
 USB and a CompactFlash card in a PC Card slot. It is one image for every
-i586 or later processor.
+i586 or later processor. The PC Card route (`PCC`, station-legacy's too) is
+experimental and outside the compatibility promise.
 
 ### 9.1 Making the floppy
 
@@ -2071,7 +2077,7 @@ The menu lists, in this order:
 |---|---|---|---|
 | `Disk 0x80`, `Disk 0x81`, ... | `MBR` | the disk's LBA 0 at 0x7C00 with DL naming that disk; nothing resident but the USB keyboards, when a `USB` route left them up | the BIOS counts the disk and its LBA 0 carries the boot signature |
 | `CD drive` | `CDR` | the disc in the first drive on the IDE channels that has one, through `ATA.MOD`: each PCI IDE controller's channels, in native or compatibility mode | the floppy holds `ATA.MOD` and an IDE controller is on the PCI bus |
-| `CF card (PC Card)` | `PCC` | the first CompactFlash card in a PC Card slot, through `PCC.MOD`: its own MBR, whatever is on it; a falcon card as the next BIOS disk, any other as drive 0x80 behind the drive swap | the floppy holds `PCC.MOD` and a CardBus bridge is on the bus |
+| `CF card (PC Card)` | `PCC` | experimental: the first CompactFlash card in a PC Card slot, through `PCC.MOD`: its own MBR, whatever is on it; a falcon card as the next BIOS disk, any other as drive 0x80 behind the drive swap | the floppy holds `PCC.MOD` and a CardBus bridge is on the bus |
 | `USB stick` | `USB` | the first falcon stick (a partition carrying a `boot` record) on a root port of any controller, or behind up to two hubs on one, through `EHCI.MOD`, `UHCI.MOD` and `OHCI.MOD`, as the next BIOS disk; the stick's own stages take it from there | the floppy holds a USB driver and its controller is on the bus |
 | `Memory test (memtest86+)` | `MEM` | `MEMTEST.BIN`, started through the x86 boot protocol | the floppy holds `MEMTEST.BIN` |
 
@@ -2108,7 +2114,7 @@ starts next that reads the keyboard through the BIOS (a disk, a CD, a CF
 card). Memory test and Escape let it go, as does station-legacy when it
 starts a system on another disk; after that only a PS/2 keyboard answers
 until a reset.
-A card or stick with no falcon record on it (DOS, Windows 9x, any other
+A card with no falcon record on it (DOS, Windows 9x, any other
 system's MBR) boots as drive C: (0x80), and for that boot the machine's own
 first disk is 0x81; a falcon card or stick boots as the disk after the
 machine's own, and the numbers stay as they are. DOS on the card reads it
@@ -2590,7 +2596,7 @@ ESP's and the shelf's.
 | `--passphrase-file` | prompt | unlocks a LUKS2 shelf |
 | `--legacy` | off | station-legacy: its stage 3, jump's drivers and `--uki` in `/uki` |
 | `--uki` | none | with `--legacy` only: a UKI for the station partition's `/uki`; repeatable |
-| `--mods` | `build/bin/mod` | with `--legacy`: the drivers' directory |
+| `--mods` | `build/bin/mod`; in a release, `/usr/lib/falcon-boot/bin/mod` | with `--legacy`: the drivers' directory |
 | `--also` | none | another disk or image of the same machine, scanned for systems; repeatable |
 | `--no-scan` | off | scans only `<disk>` and `--also`, not every disk of this machine |
 | `--backup` | `falcon-station-backup-<disk>.bin` | where everything it changes is saved first |
@@ -2828,8 +2834,9 @@ it (`the TPM refused: code 0x00000001 in EstablishTransport`).
 
 ### 10.7 update
 
-    falcon-boot-mkstick update <disk> [--from <dir>] [--backup-dir <dir>]
-        [--passphrase-file <file>] [--key <file> --cert <file>]
+    falcon-boot-mkstick update <disk> [--from <dir>] [--shim <dir>]
+        [--arch <x64|aa64>] [--backup-dir <dir>] [--passphrase-file <file>]
+        [--key <file> --cert <file>]
         [--owner-auth-file <file>] [--dry-run] [--yes]
 
 Brings a stick or a station to the loaders in `--from`, in place (DESIGN
@@ -3053,13 +3060,16 @@ openssl x509 -in /efi/falcon-mok.crt -noout -fingerprint -sha256
 
 ### 11.2 Neither partition is a storage location
 
-p1 holds four files and p3 holds five kinds of file:
+p1 holds seven files, or four without the AArch64 chain (`--no-aa64`). p3
+holds these kinds of file; `.falcon` is a `--p3-plain` p3's alone, and that
+p3 has no `falcon-mok.key`:
 
 ```
 p1  EFI/BOOT/BOOTX64.EFI  EFI/BOOT/grubx64.efi  EFI/BOOT/mmx64.efi
+    EFI/BOOT/BOOTAA64.EFI  EFI/BOOT/grubaa64.efi  EFI/BOOT/mmaa64.efi
     falcon-boot.cer
 
-p3  falcon-mok.key  falcon-mok.crt  uki/*.efi  vmlinuz-*  lost+found
+p3  falcon-mok.key  falcon-mok.crt  uki/*.efi  vmlinuz-*  lost+found  .falcon
 ```
 
 - `vmlinuz-*` on p3 must stay: the UKI is rebuilt from it on a kernel
@@ -3072,8 +3082,8 @@ Files, captures and backups go on p2. Check both, with p1 mounted at
 `/mnt/p1` and p3 at `/efi`:
 
 ```sh
-find /mnt/p1 -type f            # expect exactly the four above
-ls -A /efi                      # expect exactly the five kinds above
+find /mnt/p1 -type f            # expect only the files above
+ls -A /efi                      # expect only the kinds above
 ```
 
 ## 12. Troubleshooting by failure page
@@ -3423,7 +3433,7 @@ followed by the signature lines of 12.2. The pages:
 
 | route | text |
 |---|---|
-| CHN, IMG | `the platform refused to load this payload.` then `Bless the media with the sign tool, turn Secure Boot off in firmware setup, or run mokutil --disable-validation from Linux.` |
+| CHN, IMG | `the platform refused to load this payload.` then `Bless the media with the sign tool, turn Secure Boot off in firmware setup, or run mokutil --disable-validation from Linux.` ESXi cannot be blessed (3.4). |
 | DIR, D3A | `the platform refused this ISO's kernel. Bless the ISO, or press c on its row to boot its own loader.` |
 | BLS, BLB | `the blessed image is not signed with a key this machine has enrolled.` then `Re-bless the ISO with the MOK key enrolled here, enroll this stick's certificate with MokManager, turn Secure Boot off in firmware setup, or run mokutil --disable-validation from Linux.` |
 | EFI | `this EFI payload is not signed with a key this machine has enrolled.` then `Bless it with the sign tool, which rewrites the payload file itself; or turn Secure Boot off in firmware setup, or run mokutil --disable-validation from Linux.` |
@@ -3433,8 +3443,8 @@ followed by the signature lines of 12.2. The pages:
 
 The ways out, all the platform's:
 
-- **Sign it with a key the machine trusts.** Bless the ISO or payload
-  (`b` on its row, or `falcon-boot-sign`), or sign a UKI with the MOK
+- **Sign it with a key the machine trusts.** Bless the ISO (`b` on its row,
+  or `falcon-boot-sign`) or payload (`falcon-boot-sign`), or sign a UKI with the MOK
   (11.1).
 - **Enroll the key.** Enroll `falcon-boot.cer` with MokManager, or in db
   on a machine that trusts only its owner's keys (11.1).
@@ -3967,13 +3977,13 @@ attaches them to the GitLab release, from the project's package registry.
 |---|---|
 | `falcon-boot-X.Y.Z-x86_64.tar.gz` | mkstick and the sign tool, and everything mkstick installs |
 | `falcon-boot-X.Y.Z-aarch64.tar.gz` | the same, with mkstick and the sign tool for an arm64 machine |
-| `falcon-station-X.Y.Z.tar.gz` | the BIOS station bundle, for a station with only DevLink recovery (Section 7.8) |
+| `falcon-station-X.Y.Z.tar.gz` | the BIOS station bundle, for a station on a machine with no build (Section 7.8) |
 | `falcon-jump-X.Y.Z.img` | the falcon jump floppy, 1.44 MB, ready to write (Section 9) |
 | `SHA256SUMS` | the four files' SHA-256 |
 
 Every loader in them is unsigned: `mkstick` signs one with the MOK of the
-stick or station it installs to (Section 11.1). The signing appliance's UKI
-is not in a release; `make appliance` builds it where the stick is made
+stick or station it installs to (Section 11.1). The main tarballs carry the
+signing appliance's UKI, unsigned too; `create` signs it the same way
 (Section 4.3).
 
 ### 14.1 Checking a download
@@ -3981,9 +3991,10 @@ is not in a release; `make appliance` builds it where the stick is made
     sha256sum -c SHA256SUMS
 
 compares the files with the checksums the release page also shows. The
-tarball and the station bundle carry their own `MANIFEST`, which their
-installers check (`sha256sum -c MANIFEST`), and which catches a file that
-changed after it was unpacked.
+tarball and the station bundle carry their own `MANIFEST`, which
+`sha256sum -c MANIFEST` checks and which catches a file that changed after
+it was unpacked. The bundle's `update.sh` runs that check; nothing runs it
+on the main tarball.
 
 ### 14.2 The main tarball
 

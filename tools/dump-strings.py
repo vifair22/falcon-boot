@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """falcon-boot: collect every literal the user can read into one file.
 
-Written for the tone pass (CLAUDE.md, "Tone: no preaching"). Reviewing message
+Written for the tone pass (AGENTS.md, "Tone: no preaching"). Reviewing message
 text by grepping is hopeless once a message is split across six adjacent string
 literals with \\r\\n in the middle: what a person needs to judge is the
 PARAGRAPH, laid out the way the screen lays it out. This joins the literals,
