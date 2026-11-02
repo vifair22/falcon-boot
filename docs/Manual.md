@@ -3209,7 +3209,7 @@ below.
 | `opening the ISO`, `reading the ISO's filesystem` | - | Copy the ISO again. |
 | `locating the ISO's loader.conf` | - | Press `c`. |
 | `placing the memory-disk record` | `this ISO has no free bytes in its root or /boot directory for the record this route adds.` | Press `c`. |
-| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` (on AArch64: `too little free memory in one run`) | As it says. |
+| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Use a machine with more memory below 4 GB, or a smaller image.` (on AArch64: `too little free memory in one run` and `Use a machine with more free memory, or a smaller image.`) | As it says. |
 | `writing the loader settings` | `this ISO's loader.conf has no comment block long enough to hold the memory-disk settings.` | Press `c`. |
 
 The medium is then served as the CHN route serves it, and its later stages
@@ -3354,7 +3354,7 @@ The kernel lines, shared by DIR, POS and MEM, each ending in `.`:
 | `placing the memory-disk record` | `this ISO has no free bytes in its root or /boot directory for the record this route adds.` | Press `c`. |
 | `checking the processor` | `this image needs a 64-bit processor, and this one has no 64-bit mode.` | Use i386 media. |
 | `checking memory for the image` | `this ISO is too large for its i386 loader to hold as a memory disk: that loader runs under BTX and reaches only about 1 GB. A smaller i386 BSD ISO would boot.` | As it says. |
-| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Press c to boot the ISO's own loader instead.` | As it says. |
+| `checking memory for the image` | `this machine has too little memory below 4 GB to hold the image, which is where FreeBSD's loader has to put it. Use a machine with more memory below 4 GB, or a smaller image.` | As it says. |
 | `writing the loader settings` | `this ISO's loader.conf has no comment block long enough to hold the memory-disk settings.` | Press `c`. |
 | `placing the medium's edits` | - | The CHN stages follow. |
 
