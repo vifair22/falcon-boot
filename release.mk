@@ -13,9 +13,8 @@
 #   SHA256SUMS                        over the four, for the release key's
 #                                     signature
 #
-# Every loader is unsigned: the MOK on each stick or station signs it there
-# (DESIGN Section 7.5). The signing appliance's UKI is not shipped; it is
-# built from a distribution's kernel where the stick is made (Manual 4.3).
+# Every loader and the signing appliance's UKI are unsigned: the MOK on each
+# stick or station signs them there (DESIGN Section 7.5, Manual 4.3).
 #
 # Build it in the harness container (`tools/coverage/harness.sh make release
 # MEMTEST=... MEMTEST_EFI=...`): the static programs carry its libc, and the

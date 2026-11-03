@@ -210,8 +210,8 @@ int bsd_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
               "disk: that loader runs under BTX and reaches only about 1 GB. "
               "A smaller i386 BSD ISO would boot."
             : "this machine has too little memory below 4 GB to hold the "
-              "image, which is where FreeBSD's loader has to put it. Press c "
-              "to boot the ISO's own loader instead.";
+              "image, which is where FreeBSD's loader has to put it. Use a "
+              "machine with more memory below 4 GB, or a smaller image.";
         return -1;
     }
 

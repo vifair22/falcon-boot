@@ -23,7 +23,7 @@
  * station's list too; this file finds the rows and boots them. The
  * sentences are the UEFI station's (apps/station/efi_main.c), listed in
  * DESIGN Section 12; a change to one is a change to
- * the other (CLAUDE.md, "One screen, two loaders").
+ * the other (AGENTS.md, "One screen, every loader").
  */
 
 #include <start/bios.h>

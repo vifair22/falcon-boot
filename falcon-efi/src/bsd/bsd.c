@@ -38,9 +38,13 @@
 #if defined(__aarch64__)
 #define STAGING_MAX 0x1000000000000ull
 #define STAGING_SHORT L"this machine has too little free memory in one run to "
+#define STAGING_WAY_OUT L"Use a machine with more free memory, or a smaller " \
+                        L"image."
 #else
 #define STAGING_MAX 0x100000000ull
 #define STAGING_SHORT L"this machine has too little memory below 4 GB to "
+#define STAGING_WAY_OUT L"Use a machine with more memory below 4 GB, or a " \
+                        L"smaller image."
 #endif
 
 /* An ISO9660 sector: the memory-disk window starts on one. */
@@ -167,8 +171,7 @@ static EFI_STATUS bsd_run(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent_image,
     if (!staging_fits(bs, file->size)) {
         result->advice = STAGING_SHORT
                          L"hold the image, which is where FreeBSD's loader "
-                         L"has to put it. Press c to boot the ISO's own "
-                         L"loader instead.";
+                         L"has to put it. " STAGING_WAY_OUT;
         return result->status = EFI_OUT_OF_RESOURCES;
     }
 

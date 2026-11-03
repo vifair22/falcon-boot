@@ -651,6 +651,8 @@ out:
  * that is replaced wholesale, in memory. */
 #define GRUBCFG_MAX ((UINTN)256u * 1024u)
 #define ISO_BLOCK 2048u
+/* Copies of it replaced besides the one the entry came from. */
+#define GRUBCFG_COPIES 3u
 
 static fs_dir g_lookdir;
 
@@ -662,6 +664,9 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     EFI_BOOT_SERVICES *bs = st->BootServices;
     const bootcfg_entry *e;
     pages cp = { 0, 0 }, hp = { 0, 0 };
+    pages ep[GRUBCFG_COPIES];
+    const char *const *other;
+    UINTN np;
     UINT8 *cfg = (UINT8 *)0, *hook = (UINT8 *)0;
     UINTN map_len = 0;
     size_t hook_len = 0, hook_cap, next = 0;
@@ -680,6 +685,7 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     r->title[0] = '\0';
     r->advice = (const CHAR16 *)0;
     memset(&ovl, 0, sizeof ovl);
+    memset(ep, 0, sizeof ep);
 
     /* The hook's archive goes after the ISO's last byte, which is a block
      * boundary on every medium the virtual CD serves. */
@@ -759,10 +765,45 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
     ovl.ovl[0].iso_off = cfg_ext[0].vol_off;
     ovl.ovl[0].len = cfg_ent.size;
     ovl.ovl[0].mem = cfg;
-    ovl.ovl[1].iso_off = iso->size;
-    ovl.ovl[1].len = hook_blocks * ISO_BLOCK;
-    ovl.ovl[1].mem = hook;
-    ovl.n = 2;
+    ovl.n = 1;
+    /* The other places a GRUB may look: which one this ISO's reads is in its
+     * embedded prefix. One that cannot hold ours stays as it is. */
+    for (other = bootcfg_grub_cd_paths(), np = 0;
+         *other != (const char *)0 && np < GRUBCFG_COPIES; other++) {
+        fs_extent ext[2];
+        UINT8 *copy;
+        size_t at;
+
+        if (fs_lookup(&g_isovol, *other, &g_lookdir, &cfg_ent) != FS_OK ||
+            cfg_ent.is_dir || cfg_ent.size == 0 ||
+            cfg_ent.size > GRUBCFG_MAX ||
+            fs_extents(&g_isovol, &cfg_ent, ext, 2, &next) != FS_OK ||
+            next != 1 || ext[0].len != cfg_ent.size)
+            continue;
+        for (at = 0; at < ovl.n && ovl.ovl[at].iso_off < ext[0].vol_off; at++)
+            ;
+        if (at < ovl.n && ovl.ovl[at].iso_off == ext[0].vol_off)
+            continue;
+        copy = pages_get(bs, &ep[np], cfg_ent.size);
+        if (copy == (UINT8 *)0 ||
+            grubcfg_write(e, g_hooked, iso->size / 512u,
+                          ((UINT64)hook_len + 511u) / 512u,
+                          (size_t)cfg_ent.size, (char *)copy,
+                          (size_t)cfg_ent.size) != GRUBCFG_OK)
+            continue;
+        np++;
+        memmove(&ovl.ovl[at + 1], &ovl.ovl[at],
+                (ovl.n - at) * sizeof ovl.ovl[0]);
+        memset(&ovl.ovl[at], 0, sizeof ovl.ovl[at]);
+        ovl.ovl[at].iso_off = ext[0].vol_off;
+        ovl.ovl[at].len = cfg_ent.size;
+        ovl.ovl[at].mem = copy;
+        ovl.n++;
+    }
+    ovl.ovl[ovl.n].iso_off = iso->size;
+    ovl.ovl[ovl.n].len = hook_blocks * ISO_BLOCK;
+    ovl.ovl[ovl.n].mem = hook;
+    ovl.n++;
     ovl.extra = hook_blocks * ISO_BLOCK;
 
     /* From here the ISO has a configuration this route can serve; a
@@ -785,6 +826,8 @@ EFI_STATUS direct_grub_boot(EFI_SYSTEM_TABLE *st, EFI_HANDLE parent,
 out:
     loader_isomap_clear(st);
     pages_put(bs, &cp);
+    for (np = 0; np < GRUBCFG_COPIES; np++)
+        pages_put(bs, &ep[np]);
     pages_put(bs, &hp);
     if (scratch != (char *)0)
         bs->FreePool(scratch);

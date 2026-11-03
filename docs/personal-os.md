@@ -36,10 +36,11 @@ An OS boots from the shelf when all of these hold:
 - **Signed with your stick's MOK.** Under Secure Boot the platform verifies
   it; an unsigned or wrong-key UKI is refused (Manual 11.1 signs it, 5.4
   places it).
-- **On the shelf, named `*.efi`.** Copy it into `/uki/` on p3 (falcon also
-  reads `/EFI/Linux/`). The loader offers every regular file whose name ends
-  `.efi`, sorted by name; one match boots directly, several are offered in a
-  post-unlock chooser.
+- **On the shelf, named `*.efi`.** Copy it into `/uki/` on p3. falcon reads
+  `/EFI/Linux/` only on a shelf with no `/uki`, and `mkstick create` always
+  makes `/uki`. The loader offers every regular file whose name ends `.efi`;
+  one match boots directly, several are offered in a post-unlock chooser,
+  newest kernel first and the appliance last (Manual 5.1).
 - **A systemd initramfs.** The credential arrives the systemd way; a
   non-systemd initramfs cannot consume it.
 - **The passphrase-handoff drop-in** (below), present both in the initramfs

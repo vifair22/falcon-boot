@@ -44,6 +44,12 @@
 #        column the 32-bit ISOs are judged in. A 64-bit ISO there fails
 #        by design, with the loader saying why.
 #
+#   bios32-sse2 bios32 on a processor with SSE2, PAE and NX and still no long
+#        mode: QEMU's qemu64 model with lm taken off. The same 32-bit ISOs
+#        and no others. It passes the half of win_cpu_lacks
+#        (falcon-bios/src/win/win.c) that Windows 8 and later x86 need,
+#        which bios32 fails.
+#
 #   a64-off, a64-ms, a64-own
 #        off, ms and own on an AArch64 machine: QEMU's virt under AAVMF,
 #        emulated (TCG), the stick on xhci as USB storage (WinPE has no
@@ -223,11 +229,12 @@ state_firmware() {   # state_firmware STATE DEST
             ;;
         esac
         ;;
-    bios|bios32)
+    bios|bios32|bios32-sse2)
         STATE_CODE=
         STATE_SECURE=0
         STATE_BIOS=1
         [[ "$1" == bios32 ]] && STATE_CPU=pentium3
+        [[ "$1" == bios32-sse2 ]] && STATE_CPU=qemu64,-lm,+nx
         return 0
         ;;
     off)
@@ -259,7 +266,7 @@ state_firmware() {   # state_firmware STATE DEST
         ;;
     *)
         echo "ERROR: unknown state $1 (off, ms, own, moksb, bios, bios32," \
-             "a64-off, a64-ms, a64-own)" >&2
+             "bios32-sse2, a64-off, a64-ms, a64-own)" >&2
         return 1
         ;;
     esac
