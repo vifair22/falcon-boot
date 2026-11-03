@@ -1117,10 +1117,8 @@ case_update_stick() { # case_update_stick CASE FIRMWARE
 }
 
 case_update_station() { # case_update_station CASE FIRMWARE
-    local img=$R/station-upd.img why= stn
+    local img=$R/station-upd.img why= stn=1
     cp --sparse=always build/test-station.img "$img"
-    stn=$(sgdisk -p "$img" | awk '$7 == "FALCON-STATION" { print $1 }')
-    [[ -n "$stn" ]] || { result "$1" 0 "the station disk has no FALCON-STATION"; return; }
     key_onto "$img" 2
     ( umask 077; printf '%s' "$PASS" > "$R/pass" )
     age "$img" 1 /EFI/falcon/grubx64.efi "$stn"
@@ -1431,17 +1429,15 @@ first_rows() {
         tr -s ' \n' ' '
 }
 
-# The station disk with a STATION.INI on the ESP and in the station
-# partition: the shelf's UKI the default, a long enough count.
+# The station disk with both STATION.INIs on the ESP: the shelf's UKI the
+# default, a long enough count.
 station_ini_disk() {
-    local img=$R/station-ini.img start ini=$R/STATION.INI
+    local img=$R/station-ini.img ini=$R/STATION.INI
     cp --sparse=always build/test-station.img "$img"
     printf '[general]\ndefault = linux\ntimeout = 5\n\n[linux]\nuki = personal.efi\n' \
         > "$ini"
     mcopy -o -i "$img@@1M" "$ini" ::/EFI/falcon/STATION.INI
-    start=$(sgdisk -p "$img" | awk '$7 == "FALCON-STATION" { print $2 }')
-    [[ -n "$start" ]] || { echo "ERROR: test-station.img has no FALCON-STATION" >&2; exit 1; }
-    mcopy -o -i "$img@@$(( start * 512 ))" "$ini" ::/STATION.INI
+    mcopy -o -i "$img@@1M" "$ini" ::/STATION.INI
     rm -f "$R/blank.img"
     truncate -s 256M "$R/blank.img"
 }

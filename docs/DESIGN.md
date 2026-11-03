@@ -297,10 +297,11 @@ One layout for every BIOS install, stick, station and jump's floppy:
 
 Stage 2 finds stage 3 by reading the boot disk's table (none on a floppy: the
 volume starts at LBA 0) and taking the first partition whose boot sector
-carries a `boot` record naming a stage 3. A station installed for UEFI and
-BIOS both has a `boot` record with no stage 3 (stage 3 sector 0) on its
-ESP, which comes first on a GPT disk, and the real one on its station
-partition. Stage 2 has no stage 3 LBA of its own. The marker is a sector of the `boot`
+carries a `boot` record naming a stage 3. A station on a disk with an ESP has
+one record there, naming stage 3 when the BIOS half is installed. An older
+station can have a `boot` record with no stage 3 (stage 3 sector 0) on its
+ESP and the real one on a station partition; stage 2 passes over the first.
+Stage 2 has no stage 3 LBA of its own. The marker is a sector of the `boot`
 partition (Section 6.3.1).
 
 An old MBR disk can have only 62 sectors before its first partition and
@@ -3887,10 +3888,10 @@ three places marked.
 
 ```mermaid
 flowchart TD
-    S12["stages 1 and 2, as 11.3.2<br/>the boot partition is the station partition"] --> BM["bios_main, station_main (station/station.c)<br/>e820_read"]
+    S12["stages 1 and 2, as 11.3.2<br/>the boot partition is the ESP, or the station partition on a disk with none"] --> BM["bios_main, station_main (station/station.c)<br/>e820_read"]
     BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>each one's table (MBR or GPT) and disk id"]
     DSK --> IR["on the boot drive: install_boot_record (the install ID),<br/>marker_take (the marker sector, cleared before it is believed)"]
-    IR --> SP["read_station: the station partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c)"]
+    IR --> SP["read_station: the boot partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c)"]
     SP --> SH["find_shelves: partitions whose LUKS2 token or /.falcon is a shelf<br/>record of the install; pos_list: a plaintext shelf's UKIs are rows<br/>(uki-&lt;stem&gt;), an encrypted shelf one row, Personal OS (encrypted)"]
     SH --> CH["find_chains: each MBR primary but the station partition whose boot<br/>sector (FAT32: and its sectors 2, 12) carries a known loader<br/>(vbr_identify): mbr-&lt;sig&gt;-p&lt;n&gt;; each other disk whose LBA 0 has<br/>boot code and an active entry: mbr-&lt;sig&gt; or gpt-&lt;8&gt;<br/>(core's media/vbr.c, which the installer shares)"]
     CH --> APP["station-legacy only (legacy_rows): jroute_init over the station<br/>partition, the rows cd, cf, usb whose driver and controller are there;<br/>station_add_own_shelf: each UKI in its /uki a row by its .osrel name"]
@@ -4159,9 +4160,19 @@ legacy, the drivers. Where an NTFS partition fills the disk (the A21m's
 Windows 2000), it is shrunk first (with ntfsresize, from DevLink recovery
 or any Linux), and about 64 MB at the end becomes the station partition.
 
-**BIOS, GPT disk.** Stage 2 in the `FALCON-BIOS` EF02 partition at LBA 34;
-the station partition as on MBR, typed with a falcon type GUID of its own
-(Windows then gives it no volume, Section 3.1).
+**BIOS, GPT disk with no ESP.** Stage 2 in the `FALCON-BIOS` EF02 partition at
+LBA 34; the station partition as on MBR, typed with a falcon type GUID of its
+own (Windows then gives it no volume, Section 3.1).
+
+**BIOS, any disk with an ESP.** The stick's p1 layout: stage 3 and the marker in
+the ESP's reserved sectors, its one `boot` record naming them, and
+`STATION.INI`, `MEMTEST.BIN` and on legacy the drivers at its root, beside
+the UEFI station's `\EFI\falcon\`, whose own `STATION.INI` differs in its rows.
+Stage 2 is in `FALCON-BIOS` on GPT and at LBA 1 on MBR. No station partition.
+FAT cannot grow its reserved sectors in place, so an ESP without the room has
+to be formatted with `mkfs.fat -F 32 -R 2080`, and every ESP falcon's recipes
+format has them. A station partition from an older install stays valid, and
+`update` keeps it.
 
 **The shelf** is a partition on any of the machine's disks carrying the
 station's install ID: LUKS2 with the falcon token, or plaintext ext4 with
@@ -4481,8 +4492,9 @@ disk I/O, backups and stage splicing reused.
   backup file first, as `<backup>.BOOTX64.EFI`), the firmware entry (without
   shim naming the jumper, first in BootOrder, any older `falcon` entry
   deleted) and the ESP's record; on BIOS stage 1 into LBA 0's boot code, stage 2 before the
-  first partition, the station partition in space that is already free (MBR
-  0x1C or the falcon type on GPT), its record, stage 3 and the files. It
+  first partition, stage 3 and the files in the ESP when the disk has one,
+  else the station partition in space that is already free (MBR 0x1C or the
+  falcon type on GPT), with its record. It
   writes a signature on any disk the station will name that has none, and
   stamps the shelf it is pointed at (the falcon token, or `/.falcon`). It
   writes `STATION.INI` from what it found (12.7).
@@ -4496,9 +4508,19 @@ disk I/O, backups and stage splicing reused.
   deleted, the jumper with them and the `BOOTX64.EFI` it replaced put back
   (`<backup>.BOOTX64.EFI`, or `--bootx64` for one an update saved). The station partition itself is left for
   the user to delete.
-- **Refusals.** No free space for the station partition (it says how much it
+- **Adding a half.** On a disk with one half, `--bios` or `--uefi` adds the
+  other under the same install ID and shelf, with its own backup
+  (`stn_add_decide`). One record serves both halves on an ESP, so `remove`
+  with one half's backup leaves it for the half that stays: naming stage 3
+  when BIOS stays, and rewritten with stage 3 at 0 when UEFI does. A UEFI
+  install's backup predates a BIOS half added later, so `remove` with it also
+  leaves LBA 0, and refuses `--full`.
+- **Refusals.** An ESP without the reserved sectors (it gives the `mkfs.fat -R`
+  count; with no flag only the UEFI half goes on, and it says why); on a disk
+  with no ESP, no free space for the station partition (it says how much it
   needs); stage 2 not fitting before the first partition; a disk with a
-  mounted filesystem it would write. It warns when the station partition or
+  mounted filesystem it would write; a boot record that is not one half of a
+  station, or a disk that has the half asked for. It warns when the station partition or
   the shelf would sit past 8 GB or 128 GiB (Section 3.4).
 - **status** reads the records, the stages and the INI, and says what boots.
 
@@ -4529,8 +4551,8 @@ header). The Manual's Section 10.6 is its reference.
   that makes a 4Kn ESP 260 MB. A 4Kn image is written through a loop device
   with 4096-byte sectors, and a loop device is an image: the machine's
   other disks are not scanned for it and no firmware entry is read or made.
-- **Two boot records on one disk.** A GPT disk with both stations carries
-  the ESP's record (stage 3 and marker 0) and the station partition's.
+- **Two boot records on one disk.** An older GPT disk with both stations
+  carries the ESP's record (stage 3 and marker 0) and the station partition's.
   The one with a stage 3 is the BIOS one, as the installer and `status`
   take it, and as stage 2's `bootpart_find` does: it passes over a boot
   record whose stage 3 sector is 0, so the ESP, first in the table, is not
@@ -4818,12 +4840,12 @@ brings each half to the loaders in `--from` (default `build/bin`):
 - *a BIOS station*: a boot record naming a stage 3 sector with
   `STATION.INI` beside it, station-legacy's stage 3 and drivers when the
   partition carries any `*.MOD`. It is found by stage 2's own rule
-  (`records_bios_boot`, `falcon-bios/src/disk/bootpart.c`): an ESP's UEFI
-  station record carries stage 3 at 0, so on a disk with both stations
-  the first boot record is the ESP's. `mkstick bios`, `next-boot` and
-  `status` find it by the same rule.
+  (`records_bios_boot`, `falcon-bios/src/disk/bootpart.c`): the ESP when
+  its record names a stage 3, else a station partition, passing over an ESP
+  whose record has stage 3 at 0. `mkstick bios`, `next-boot` and `status`
+  find it by the same rule.
 - *a UEFI station*: an ESP carrying the install's record with a loader in
-  `\EFI\falcon`.
+  `\EFI\falcon`, whether or not that record names a stage 3.
 - *both*: both halves. Any other disk is refused, and so is one whose
   partitions it writes are mounted.
 

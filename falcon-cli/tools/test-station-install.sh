@@ -205,7 +205,7 @@ else
     truncate -s 1G "$G"
     sgdisk -o -n 1:2048:+100M -t 1:EF00 -n 2:0:+700M -t 2:0700 \
         -n 3:0:+64M -t 3:9CB02E90-85F4-4AF7-9AF3-1F9D6A95FEAF "$G" >/dev/null
-    mkfs.fat -F 32 -s 1 --offset 2048 --mbr=n "$G" 102400 >/dev/null 2>&1
+    mkfs.fat -F 32 -s 1 -R 2080 --offset 2048 --mbr=n "$G" 102400 >/dev/null 2>&1
     head -c 8192 /dev/urandom >"$W/bootmgfw.efi"
     mmd -i "$G@@1048576" ::/EFI ::/EFI/Microsoft ::/EFI/Microsoft/Boot
     mcopy -i "$G@@1048576" "$W/bootmgfw.efi" ::/EFI/Microsoft/Boot/bootmgfw.efi
@@ -232,10 +232,11 @@ else
         { cat "$W/gpt-install.log"; bad "gpt: install"; }
     sgdisk -p "$G" >"$W/gpt-table.txt"
     check "gpt: the FALCON-BIOS partition at LBA 34" grep -qE "^ +[0-9]+ +34 .*EF02.*FALCON-BIOS" "$W/gpt-table.txt"
-    check "gpt: the station partition" grep -q "FALCON-STATION" "$W/gpt-table.txt"
+    check "gpt: no station partition: BIOS is on the ESP" bash -c "! grep -q FALCON-STATION '$W/gpt-table.txt'"
+    check "gpt: BIOS's STATION.INI at the ESP's root" mtype -i "$G@@1048576" ::/STATION.INI
     gid=$("$MK" ident "$G" | awk '$2 == "boot" { print $3 }' | sort -u)
-    check "gpt: the ESP and the station partition carry one install ID" \
-        test "$(wc -l <<<"$gid")" -eq 1 -a "$("$MK" ident "$G" | awk '$2 == "boot"' | wc -l)" -eq 2
+    check "gpt: the ESP carries the one boot record" \
+        test "$(wc -l <<<"$gid")" -eq 1 -a "$("$MK" ident "$G" | awk '$2 == "boot"' | wc -l)" -eq 1
     check "gpt: the plaintext shelf (partition 3) carries it" \
         grep -q "falcon 1 shelf $gid" <(debugfs -R "cat /.falcon" "$G?offset=$((p3s * 512))" 2>/dev/null)
     for f in shimx64.efi mmx64.efi grubx64.efi falcon-boot.cer STATION.INI memtest.efi; do
@@ -257,7 +258,7 @@ else
     check "gpt: remove deletes \\EFI\\falcon" bash -c "! mdir -i '$G@@1048576' ::/EFI/falcon"
     check "gpt: remove keeps Windows Boot Manager" mtype -i "$G@@1048576" ::/EFI/Microsoft/Boot/bootmgfw.efi
     check "gpt: remove drops the FALCON-BIOS partition" bash -c "! sgdisk -p '$G' | grep -q FALCON-BIOS"
-    check "gpt: remove leaves the station partition" grep -q FALCON-STATION <(sgdisk -p "$G")
+    check "gpt: remove takes STATION.INI off the ESP's root" bash -c "! mtype -i '$G@@1048576' ::/STATION.INI"
     "$MK" station remove --backup "$W/gpt.bak" --full --force >"$W/gpt-remove-full.log" 2>&1 &&
         ok "gpt: remove --full" || { cat "$W/gpt-remove-full.log"; bad "gpt: remove --full"; }
     # The ESP keeps the deleted directory entries mdeltree leaves, and the
