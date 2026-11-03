@@ -7,7 +7,7 @@
 #
 # Before the install:
 #
-#   p1  ESP                 FAT32, empty
+#   p1  ESP                 FAT32 with 2080 reserved sectors, empty
 #   p2  falcon shelf GUID   LUKS2, argon2id (64 MiB, time 4, 4 lanes:
 #                           cryptsetup's shape, its memory pinned so the
 #                           rig's machines can meet it), ext4,
@@ -26,10 +26,9 @@
 #                           stand-in, which the installer signs); the
 #                           ESP's boot record
 #   p2                      the falcon token naming the install
+#   p1 for BIOS             stage 3 and the marker in its reserved sectors,
+#                           the record naming them, /STATION.INI
 #   p4  FALCON-BIOS (EF02)  stage 2 at LBA 34; stage 1 in LBA 0
-#   p5  FALCON-STATION      the station partition: FAT32, its boot record,
-#                           stage 3 and the marker in its reserved sectors,
-#                           STATION.INI
 #
 # The MOK pair is given as --key/--cert rather than read off the shelf, so
 # nothing asks for the passphrase and the installer lists no UKI: its
@@ -47,7 +46,7 @@
 # Usage: falcon-efi/tools/mk-test-station.sh
 # Env:   FALCON_TEST_PASS  passphrase for p2 and p3 (default "falcon-test")
 #        STATION_ARCH      x64 (default) or aa64: build/test-station-aa64.img,
-#                          an AArch64 station (UEFI only: no p4, no p5), the
+#                          an AArch64 station (UEFI only: no p4), the
 #                          arm64 fixture UKI, BOOTAA64.EFI
 #
 # Needs sudo for losetup and cryptsetup, like mk-test-stick.sh, and for the
@@ -137,7 +136,7 @@ sgdisk -n 1:2048:+64M -t 1:EF00 -c 1:ESP \
 
 LOOP=$(sudo losetup -P --show -f "$IMG")
 sudo udevadm settle 2>/dev/null || sleep 1
-sudo mkfs.fat -F 32 -n ESP "${LOOP}p1" >/dev/null
+sudo mkfs.fat -F 32 -R 2080 -n ESP "${LOOP}p1" >/dev/null
 
 printf '%s' "$PASS" | sudo cryptsetup luksFormat --type luks2 \
     --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-force-iterations 4 \

@@ -19,9 +19,9 @@
 #   4kn   GPT on a 4096-byte-sector disk (a loop device with 4096-byte
 #         sectors, booted as NVMe with 4096-byte logical blocks, the one QEMU
 #         disk SeaBIOS offers at that size; DESIGN Section 3.4): an ESP of
-#         300 MiB, a LUKS2 shelf, free space. `station install --shim`, through a
-#         link named like a by-id one, both stations: the station partition
-#         (288 MiB, FAT32 of 4096-byte sectors), the FALCON-BIOS partition at
+#         300 MiB formatted with room in its reserved sectors, a LUKS2 shelf,
+#         free space. `station install --shim`, through a link named like a
+#         by-id one, both stations on the ESP, the FALCON-BIOS partition at
 #         LBA 34, everything counted in 4096-byte sectors.
 #   mbr4k MBR on a 4096-byte-sector disk: a Windows partition, a LUKS2
 #         shelf, free space. `station install --bios`.
@@ -104,6 +104,14 @@
 #   foreign-jump  foreign: the installer saves the other system's
 #                 BOOTX64.EFI beside its backup and puts the jumper there;
 #                 `station remove` puts it back byte for byte
+#   esp-both      a new install on an ESP with room: both halves on it and no
+#                 station partition; both firmwares boot; one short of room
+#                 is refused with the mkfs.fat count
+#   add-bios      a UEFI station gets `station install --bios`: the install ID
+#                 kept, both firmwares boot, and each half comes off by its own
+#                 backup, the first install's first
+#   add-uefi      a BIOS station on the ESP gets `station install --uefi` with
+#                 no --shelf, the shelf found by the install's ID
 #
 # The disks are image files; the 4096-byte-sector ones are written through
 # loop devices, which needs sudo, as do cryptsetup and the installer's
@@ -270,7 +278,7 @@ build_4kn() {
         -n 2:0:+64MiB -t 2:"$SHELF_GUID" -c 2:FALCON-UKI "$LOOP" >/dev/null
     sudo partx -u "$LOOP" 2>/dev/null || true
     sudo udevadm settle 2>/dev/null || sleep 1
-    sudo mkfs.fat -F 32 -n SYSTEM "${LOOP}p1" >/dev/null
+    sudo mkfs.fat -F 32 -R 2080 -n SYSTEM "${LOOP}p1" >/dev/null
     make_shelf "${LOOP}p2"
     cp --sparse=always "$img" "$R/4kn.orig.img"
     # Through a link named like a by-id one: the partitions are the
@@ -1030,6 +1038,173 @@ case_4kn_remove() {
     result "$c" "$WHY" "status: ${out:-0} checks OK; remove --full gave back the original bytes outside the ESP and shelf"
 }
 
+# A disk with a blank ESP (RESERVED sectors of it) and a LUKS2 shelf.
+blank_esp_disk() {      # blank_esp_disk IMG RESERVED
+    local img=$1 reserved=$2
+
+    rm -f "$img"
+    truncate -s 256M "$img"
+    sgdisk -n 1:2048:+64M -t 1:EF00 -c 1:EFI \
+        -n 2:0:+64M -t 2:"$SHELF_GUID" -c 2:FALCON-UKI "$img" >/dev/null
+    mkfs.fat -F 32 -R "$reserved" --offset 2048 -n SYSTEM "$img" \
+        $(( 64 * 1024 )) >/dev/null 2>&1
+    attach "$img"
+    make_shelf "${LOOP}p2"
+    detach
+}
+
+# Every record on a disk carrying one install ID: prints it, or nothing.
+one_id() {      # one_id IMG
+    sudo "$MKSTICK" ident "$1" |
+        awk -F '\t' '$3 != "-" { print $3 }' | sort -u |
+        awk 'NR == 1 { id = $0 } END { if (NR == 1) print id }'
+}
+
+# Boots IMG under SeaBIOS and OVMF; each must take the ESP and reach the
+# shelf's UKI. Sets WHY.
+boot_both() {   # boot_both IMG ID
+    local img=$1 id=$2 facts
+    facts=$(part_facts "$img" 1)
+    boot bios "$img" sata - 0
+    wait_for "boot partition p1 at LBA" 60 || WHY="BIOS: stage 2 did not take the ESP"
+    [[ -z "$WHY" ]] && { wait_for "install $id" 30 ||
+        WHY="BIOS: stage 3 did not report install $id"; }
+    [[ -z "$WHY" ]] && { wait_for "booting: personal.efi" 30 ||
+        WHY="BIOS: the default was not the shelf's UKI"; }
+    [[ -z "$WHY" ]] && unlock "$id" 60
+    halt
+    [[ -n "$WHY" ]] && return 0
+    ENTRY="\\EFI\\BOOT\\BOOT$UP.EFI" boot uefi "$img" "$BUS" "$facts" 0
+    wait_for "booting: personal.efi" 90 ||
+        WHY="UEFI: the default was not the shelf's UKI"
+    [[ -z "$WHY" ]] && unlock "$id" 30
+    halt
+}
+
+bios_boots() {  # bios_boots IMG ID
+    boot bios "$1" sata - 0
+    wait_for "install $2" 60 || WHY="removing the UEFI half took BIOS with it"
+    halt
+}
+
+# A new install on an ESP with room puts both halves on it, with no station
+# partition; `update` sees both. An ESP without the room is refused with the
+# mkfs.fat count, and with no flag the UEFI half goes on alone.
+case_esp_both() {
+    local c=$1 img=$R/esp-both.img id out
+    WHY=
+    : > "$R/serial.log"
+    blank_esp_disk "$img" 32
+    if out=$(sudo "$MKSTICK" station install "$img" --bios --no-scan --dry-run 2>&1); then
+        WHY="--bios on an ESP of 32 reserved sectors was not refused"
+    elif ! grep -q 'mkfs.fat -F 32 -R 2080' <<<"$out"; then
+        WHY="the refusal did not name the mkfs.fat count"
+    fi
+    if [[ -z "$WHY" ]]; then
+        blank_esp_disk "$img" 2080
+        install_station esp-both "$img" --shelf 2 --no-scan
+        id=$(one_id "$img")
+        [[ -n "$id" ]] || WHY="the records do not carry one install ID"
+    fi
+    [[ -z "$WHY" ]] && sgdisk -p "$img" | grep -q FALCON-STATION &&
+        WHY="the install made a station partition"
+    if [[ -z "$WHY" ]]; then
+        # shellcheck disable=SC2024
+        sudo "$MKSTICK" station status "$img" --no-scan \
+            >"$R/esp-both.status" 2>&1 || WHY="station status failed"
+    fi
+    [[ -z "$WHY" ]] && boot_both "$img" "$id"
+    if [[ -z "$WHY" ]]; then
+        ( umask 077; printf '%s' "$PASS" > "$R/pass" )
+        mkdir -p "$R/esp-both-upd"
+        # shellcheck disable=SC2024
+        sudo "$MKSTICK" update "$img" --from build/bin --passphrase-file "$R/pass" \
+            --backup-dir "$R/esp-both-upd" --yes >"$R/esp-both.update" 2>&1 ||
+            WHY="update failed: $(tail -1 "$R/esp-both.update")"
+        rm -f "$R/pass"
+        [[ -z "$WHY" ]] && { grep -q 'write: stages 1-3' "$R/esp-both.update" &&
+            grep -q 'write: partition 1 .*falconx64.efi' "$R/esp-both.update" ||
+            WHY="update does not see both halves"; }
+        [[ -z "$WHY" ]] && boot_both "$img" "$id"
+    fi
+    if [[ -z "$WHY" ]]; then
+        sudo "$MKSTICK" station remove "$img" --backup "$R/esp-both.bak" \
+            >/dev/null 2>&1 || WHY="station remove failed"
+        [[ -z "$WHY" ]] && mdir -b -i "$img@@1M" :: 2>/dev/null | grep -qi 'STATION.INI' &&
+            WHY="remove left STATION.INI at the ESP's root"
+    fi
+    rm -f "$img"
+    result "$c" "$WHY" "both halves on the ESP, no station partition, both firmwares boot, update sees both; a short ESP refused with the count"
+}
+
+# A UEFI station on an ESP with room gets its BIOS half: the install ID and
+# the shelf's stamp stay, and each half comes off by its own backup, the first
+# install's first, which leaves BIOS booting.
+case_add_bios() {
+    local c=$1 img=$R/add-bios.img id out
+    WHY=
+    : > "$R/serial.log"
+    blank_esp_disk "$img" 2080
+    install_station add-bios-first "$img" --uefi --shelf 2 --no-scan
+    id=$(one_id "$img")
+    if out=$(sudo "$MKSTICK" station install "$img" --no-scan --dry-run 2>&1); then
+        WHY="no flag on a UEFI station was not refused"
+    elif ! grep -q -- '--bios' <<<"$out"; then
+        WHY="the refusal did not name --bios"
+    fi
+    [[ -z "$WHY" ]] && sudo "$MKSTICK" station install "$img" --uefi --no-scan \
+        --dry-run >/dev/null 2>&1 && WHY="--uefi on a UEFI station was not refused"
+    if [[ -z "$WHY" ]]; then
+        install_station add-bios "$img" --bios --no-scan
+        [[ $(one_id "$img") == "$id" ]] ||
+            WHY="the records do not all carry install $id"
+    fi
+    [[ -z "$WHY" ]] && boot_both "$img" "$id"
+    [[ -z "$WHY" ]] && sudo "$MKSTICK" station remove "$img" \
+        --backup "$R/add-bios-first.bak" --full >/dev/null 2>&1 &&
+        WHY="--full from before the BIOS half was not refused"
+    if [[ -z "$WHY" ]]; then
+        sudo "$MKSTICK" station remove "$img" --backup "$R/add-bios-first.bak" \
+            >/dev/null 2>&1 || WHY="removing the UEFI half failed"
+    fi
+    [[ -z "$WHY" ]] && bios_boots "$img" "$id"
+    if [[ -z "$WHY" ]]; then
+        sudo "$MKSTICK" station remove "$img" --backup "$R/add-bios.bak" \
+            >/dev/null 2>&1 || WHY="removing the BIOS half failed"
+    fi
+    rm -f "$img"
+    result "$c" "$WHY" "same install ID, both firmwares boot, each half removed by its own backup"
+}
+
+# A BIOS station on the ESP gets its UEFI half with no --shelf, the shelf found
+# by the install's ID; removing BIOS then leaves the UEFI station its record.
+case_add_uefi() {
+    local c=$1 img=$R/add-uefi.img id
+    WHY=
+    : > "$R/serial.log"
+    blank_esp_disk "$img" 2080
+    install_station add-uefi-first "$img" --bios --shelf 2 --no-scan
+    id=$(one_id "$img")
+    sudo "$MKSTICK" station install "$img" --bios --no-scan --dry-run \
+        >/dev/null 2>&1 && WHY="--bios on a BIOS station was not refused"
+    if [[ -z "$WHY" ]]; then
+        install_station add-uefi "$img" --uefi --no-scan
+        [[ $(one_id "$img") == "$id" ]] ||
+            WHY="the records do not all carry install $id"
+    fi
+    [[ -z "$WHY" ]] && boot_both "$img" "$id"
+    if [[ -z "$WHY" ]]; then
+        sudo "$MKSTICK" station remove "$img" --backup "$R/add-uefi-first.bak" \
+            >/dev/null 2>&1 || WHY="removing the BIOS half failed"
+    fi
+    if [[ -z "$WHY" ]]; then
+        [[ $(sudo "$MKSTICK" ident "$img" | awk -F '\t' '$2 == "boot" { print $3; exit }') == "$id" ]] ||
+            WHY="removing BIOS took the ESP's record"
+    fi
+    rm -f "$img"
+    result "$c" "$WHY" "same install ID, the shelf found by it, both firmwares boot, removing BIOS leaves the ESP's record"
+}
+
 # ---- run ----
 
 build_all
@@ -1047,7 +1222,7 @@ CASES=("$@")
            second-sb-nxt second-esp second-sb-esp mbr-uefi mbr-uefi-sb
            noshim-uefi noshim-uefi-sb noshim-jump-uefi noshim-jump-uefi-sb
            noshim-status noshim-update noshim-migrate foreign-jump
-           mbr4k-bios-bad)
+           mbr4k-bios-bad esp-both add-bios add-uefi)
 
 # The AArch64 machines: the gpt and noshim disks again, with an AArch64
 # station (--arch aa64), the arm64 fixture UKI and stand-in, on virtio under
@@ -1096,7 +1271,7 @@ for c in "${CASES[@]}"; do
     uefi-sb-pos)     case_uefi_pos "$label" uefi-sb ;;
     4kn-uefi)        case_4kn_uefi "$label" uefi ;;
     4kn-uefi-sb)     case_4kn_uefi "$label" uefi-sb ;;
-    4kn-bios)        case_bios "$label" "$R/4kn.img" 4 ;;
+    4kn-bios)        case_bios "$label" "$R/4kn.img" 1 ;;
     4kn-remove)      case_4kn_remove "$label" ;;
     mbr4k-bios)      case_bios "$label" "$R/mbr4k.img" 3 ;;
     mbr4k-bios-bad)  case_bios_bad "$label" "$R/mbr4k.img" ;;
@@ -1114,6 +1289,9 @@ for c in "${CASES[@]}"; do
     noshim-update)   case_noshim_update "$label" ;;
     noshim-migrate)  case_noshim_migrate "$label" uefi-sb ;;
     foreign-jump)    case_foreign_jump "$label" ;;
+    esp-both)        case_esp_both "$label" ;;
+    add-bios)        case_add_bios "$label" ;;
+    add-uefi)        case_add_uefi "$label" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

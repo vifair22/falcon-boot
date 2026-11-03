@@ -241,6 +241,7 @@ typedef enum {
 #define STN_FLAG_MADE_PART 0x04u   /* the station partition is ours */
 #define STN_FLAG_MADE_EF02 0x08u   /* so is the FALCON-BIOS partition */
 #define STN_FLAG_FW_ENTRY  0x10u   /* a firmware entry was created */
+#define STN_FLAG_BIOS_ESP  0x20u   /* the BIOS half is on the ESP */
 
 typedef struct {
     uint32_t disk;        /* index into stn_backup.disks */
@@ -378,6 +379,24 @@ int stn_fw_find(const stn_fw *fw, const char *want);
  * count. */
 unsigned stn_fw_order_first(const stn_fw *fw, uint16_t num, uint16_t *out,
                             unsigned cap);
+
+/* ---- adding to a station ---- */
+
+typedef enum {
+    STN_ADD_FRESH = 0,      /* no boot record: a new install */
+    STN_ADD_BIOS,           /* a UEFI station gets its BIOS half */
+    STN_ADD_UEFI,           /* a BIOS station gets its UEFI half */
+    STN_ADD_NAME_IT,        /* one half is there, and no flag asks for the other */
+    STN_ADD_REFUSE          /* the half asked for is there, or not a station */
+} stn_add;
+
+/* What `station install` does with what is already on the disk. has_record:
+ * any boot record. bios_station, uefi_station: the halves of a station it
+ * found. A disk with a record and neither half is something else's, a stick
+ * above all. Asking for both firmwares on a disk with one half is refused:
+ * the half that is there is not reinstalled. */
+stn_add stn_add_decide(int has_record, int bios_station, int uefi_station,
+                       int ask_bios, int ask_uefi);
 
 /* ---- reach ---- */
 
