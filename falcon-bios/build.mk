@@ -127,7 +127,9 @@ BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 # The station's chains, a partition's boot sector and another disk's MBR,
 # with the drive swap (DESIGN Section 12.4); vbrcore.c is the tested half,
 # and core's vbr.c what a boot sector is.
-BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
+BIOS_MOD_swap    := $(BIOS)/mbr/swap.c
+BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR) \
+	$(BIOS_MOD_swap)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 # The CD, USB and CF routes through those drivers (DESIGN Sections 13.6 and

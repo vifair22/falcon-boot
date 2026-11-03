@@ -99,10 +99,9 @@ tinycore-17.1	B	tinycore	877f65d7e4fd2629ff06ebdd24dc982b50141fe3f8c8b0e7f01e089
 slackware-15.0-dvd	B	slackware	f795ef602707bcd0c2e615e88b307f71a18039ee54c89a0109588500258991c2	slackware-15.0-install-dvd.iso	https://mirrors.slackware.com/slackware/slackware-iso/slackware-15.0-iso/slackware-15.0-install-dvd.iso	i686
 #
 # Windows before 10, supplied by the user (Microsoft no longer
-# offers them). 2000 and XP install through a text-mode setup with no WIM,
-# which the Windows route does not reach; Vista and 7 have a WIM but a
+# offers them). XP installs through a text-mode setup with no WIM, which the
+# Windows route does not reach; Vista and 7 have a WIM but a
 # WinPE that cannot attach an ISO; 8.1 has both.
-windows-2000-pro-x86	C	windows	0d901b135b29826e34588e3a9facd33dbed299be38a773fe36c75a13ea2740c1	windows-2000-pro-x86.iso	local:Windows 2000 Professional (W2PFPP_EN), i386, supplied by the user	i686
 windows-xp-pro-sp3-x86	C	windows	fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927	windows-xp-pro-sp3-x86.iso	local:Windows XP Professional SP3 volume licence (x14-73974), i386, supplied by the user	i686
 windows-xp-pro-x64	C	windows	7c24e588a16021cb88c37935d42b91ecbbd47de319b00ff39745f0f5577585c6	windows-xp-pro-x64.iso	local:Windows XP Professional x64 (ARMPXVOL_EN), supplied by the user
 windows-vista-x86	C	windows	ae60ecc228587b615fbd27b7071138b1b257521c3b0b9491614f575978158a73	windows-vista-x86.iso	local:Windows Vista RTM x86, all editions (x12-34293), supplied by the user	i686

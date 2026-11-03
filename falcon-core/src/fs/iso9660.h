@@ -202,6 +202,11 @@ int iso9660_probe(iso9660_read_fn read, void *read_ctx);
  * (ISO9660_BLOCK bytes) and the record appended; *blk_lba is that block's LBA,
  * so the caller overlays only it. ISO9660_ERR_NOSPACE if the last block has no
  * room for the record. Nothing is written to media. */
+/* The same, into a directory block already held, for a second record after
+ * iso9660_append_record filled `blk`. */
+int iso9660_append_record_in(uint8_t *blk, const char *name, uint32_t ext_lba,
+                             uint32_t ext_len);
+
 int iso9660_append_record(iso9660_vol *v, uint32_t dir_lba, uint32_t dir_len,
                           const char *name, uint32_t ext_lba, uint32_t ext_len,
                           uint8_t *out, uint32_t *blk_lba);

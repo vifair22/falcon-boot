@@ -23,6 +23,10 @@
  * Returns nonzero with *r filled in when the medium cannot be served: no
  * BIOS boot image in its catalog, or an ISO in more pieces on p2 than the
  * handler will scan. What it hands over is logged to serial. */
+/* Called once the resident is hooked and its memory taken, the last thing
+ * before the medium has the machine; NULL for nothing. Must not fail. */
+extern void (*vcd_before_handover)(const bios_disk *d);
+
 int vcd_chainload(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                   const fs_dirent *iso, fs_file *isofile, boot_result *r);
 
@@ -81,5 +85,12 @@ int vcd_overlay_at(uint32_t cd_lba, const uint8_t *sector);
  * its first sector is where a relocated file's record must point. Call before
  * vcd_chainload; one redirect per medium. */
 int vcd_overlay_redirect(uint32_t src_cd_lba, uint32_t n_cd);
+
+/* The sectors vcd_overlay_at and vcd_overlay staged so far, for a driver that
+ * has to serve the same edits once the BIOS is gone: entry i's first CD sector
+ * and length, and where its bytes are staged. Returns how many entries there
+ * are, whatever max is; only the first max are filled. */
+unsigned vcd_overlay_list(uint32_t *lbas, uint32_t *counts, uint8_t **bytes,
+                          unsigned max);
 
 #endif /* FALCON_BIOS_VCD_H */

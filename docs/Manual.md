@@ -354,7 +354,7 @@ rather than `BLS`.
 | `POS` | personal OS: a UKI from p3, unwrapped and its kernel started | the personal OS row |
 | `DIR` | direct kernel boot, falcon-hook of the kernel's width appended | Enter or `d` on a Linux ISO |
 | `WIN` | Windows install media, boot.wim patched, the tail served from extended memory | Enter or `d` on a Windows ISO with a boot.wim (Vista and later) |
-| `WXP` | Windows 2000/XP text-mode setup: txtsetup.sif edited in memory to load a virtual-CD driver, then the ISO's own loader off the resident virtual CD | Enter or `d` on Windows 2000/XP media |
+| `WXP` | Windows XP text-mode setup: txtsetup.sif edited in memory to load a virtual-CD driver, then the ISO's own loader off the resident virtual CD | Enter or `d` on Windows 2000/XP media |
 | `BSD` | a BSD medium served as its own memory disk | Enter or `d` on a BSD ISO |
 | `CHN` | the ISO's own bootloader off the resident virtual CD | `c` on an ISO, or a fallback |
 
@@ -392,7 +392,7 @@ A processor older than i586 stops before the menu, on screen and serial:
 | UEFI | `WIN` | `CHN` | Windows media with nothing to patch |
 | UEFI | `BSD` | `CHN` | the medium is not one the memory-disk route applies to |
 | BIOS | `WIN` | `WXP` | Windows media with no boot.wim to patch |
-| BIOS | `WXP` | `CHN` | not Windows 2000/XP media (no `i386/txtsetup.sif`) |
+| BIOS | `WXP` | `CHN` | not Windows XP media (no `i386/txtsetup.sif`) |
 | BIOS | `BSD` | `DIR` | the medium is not one the memory-disk route applies to |
 | BIOS | `DIR` | `CHN` | no boot entry in the ISO's configuration the loader can take, or its kernel is not a Linux kernel the loader can start (DOS, BSD, anything else) |
 
@@ -1356,17 +1356,25 @@ key is logged and ignored. The file is read when WinPE attaches
 the ISO itself; media whose WinPE needs falcon-vdisk (6.2) does not read it.
 What was applied is in the log, as `options:` lines.
 
-### 6.2 Windows 2000, XP and older WinPE
+### 6.2 Windows XP and older WinPE
 
 **Windows Vista and 7.** Their WinPE cannot attach an ISO. falcon-winjump
 loads falcon-vdisk, a driver that serves the ISO as a CD-ROM from the
 stick's disk, and Setup finds its files there. The driver loads in 32-bit
 WinPE.
 
-**Windows 2000 and XP** (BIOS loader only). The media has no `boot.wim`, so
+**Windows XP** (BIOS loader only). The media has no `boot.wim`, so
 `WIN` falls through to `WXP`: the loader adds falcon-vdisk to text-mode
 Setup's driver list (`txtsetup.sif`) on the served CD, and the driver reads
-the ISO from the stick. The page reads:
+the ISO from the stick. Keep the stick plugged in until Setup has finished its
+graphical phase and you are at the desktop or the logon screen. Setup installs
+the driver with Windows, where it serves the ISO until Setup is done and then
+turns itself off, so the installed system boots without the stick. While Setup
+runs, the ISO has a drive letter after `C:`. A disabled `_FALCON.SYS` stays in
+`system32\drivers`.
+
+Windows 2000 install media is refused. An installed Windows 2000 boots from its
+disk as any other system does. The page reads:
 
     booting Windows setup with the virtual-CD driver injected
 
@@ -1374,11 +1382,12 @@ A failure is `Windows setup failed while <stage>`, with one of:
 
     this machine has too little memory above 64 MB to inject the driver.
     there is not enough memory to inject the driver.
+    Windows 2000 install media is not supported.
     txtsetup.sif is not one this loader can edit.
     the ISO's i386 directory has no room for the driver's record.
     this ISO's i386 layout is one this loader does not edit.
 
-Media that is not 2000/XP text-mode setup falls through to `CHN`.
+Media that is not XP text-mode setup falls through to `CHN`.
 
 ## 7. The station
 
@@ -3351,6 +3360,7 @@ The kernel lines, shared by DIR, POS and MEM, each ending in `.`:
 | WIN | `growing boot.wim` | - | Report it. |
 | WXP | `reserving memory for the driver injection` | `this machine has too little memory above 64 MB to inject the driver.` / `there is not enough memory to inject the driver.` | Use a machine with more memory. |
 | WXP | `reading txtsetup.sif` | - | Copy the ISO again. |
+| WXP | `reading txtsetup.sif` | `Windows 2000 install media is not supported.` | Install from Windows XP or later media. |
 | WXP | `injecting the driver into txtsetup.sif` | `txtsetup.sif is not one this loader can edit.` | Press `c`. |
 | WXP | `growing the ISO in memory` | `the ISO's i386 directory has no room for the driver's record.` / `this ISO's i386 layout is one this loader does not edit.` | Press `c`. |
 | WIN, WXP | `booting` | - | The served medium's stages follow, as CHN. |
