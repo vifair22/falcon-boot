@@ -163,6 +163,19 @@ int vcd_overlay_at(uint32_t cd_lba, const uint8_t *sector)
     return 0;
 }
 
+unsigned vcd_overlay_list(uint32_t *lbas, uint32_t *counts, uint8_t **bytes,
+                          unsigned max)
+{
+    unsigned i;
+
+    for (i = 0; i < g_n_pending && i < max; i++) {
+        lbas[i] = g_pending[i].cd_lba;
+        counts[i] = g_pending[i].n_cd;
+        bytes[i] = g_pool + (size_t)g_pending[i].pool_at * VCD_CD_BYTES;
+    }
+    return g_n_pending;
+}
+
 int vcd_overlay(fs_file *isofile, uint64_t iso_off, const void *bytes,
                 uint32_t len)
 {
@@ -230,6 +243,8 @@ static void write_spec(uint8_t *at, const elt_entry *e, uint16_t load_seg)
  * found, the map finished and carved, the resident written and the machine
  * handed over. `read` reads the medium by byte offset, in whole CD sectors.
  * Returns only on a refusal. */
+void (*vcd_before_handover)(const bios_disk *d);
+
 static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
                   void *ctx, boot_result *r)
 {
@@ -440,6 +455,8 @@ static int launch(bios_disk *d, const elt_entry *e, fs_read_fn read,
     lowmem_take(seg);
     poke32(IVT_INT13, ((uint32_t)seg << 16) | (uint32_t)VCD_OFF_CODE);
     poke32(IVT_INT15, ((uint32_t)seg << 16) | (uint32_t)VCD_OFF_CODE15);
+    if (vcd_before_handover != 0)
+        vcd_before_handover(d);
 
     /* Out through the stub, not straight to the boot image: what boot16
      * lands on has to still be there after the image is placed. */
