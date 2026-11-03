@@ -26,6 +26,8 @@
 #include <start/bios.h>
 #include <win/win.h>
 #include <iso/vcd.h>
+#include <mbr/swap.h>
+#include <mem/lowmem.h>
 #include <mem/heap.h>
 #include <linux/linux.h>
 
@@ -51,7 +53,7 @@ extern const unsigned char falcon_winjump32_bin[];
 extern const size_t falcon_winjump32_bin_len;
 
 /* The x86 virtual-CD driver, embedded the same way (falcon-bios/build.mk). The
- * 2000/XP route serves it into the ISO's \i386 and injects it into
+ * XP route serves it into the ISO's \i386 and injects it into
  * txtsetup.sif, since those Windows have no WinPE and so no winjump. */
 extern const unsigned char falcon_vdisk_bin[];
 extern const size_t falcon_vdisk_bin_len;
@@ -626,7 +628,94 @@ static void xp_bake_map(uint8_t *sys, size_t sys_len,
     }
 }
 
-/* Windows 2000/XP have no WinPE, so the loader cannot patch a running PE; it
+/* What the driver bakes besides the map, after it in the struct (vdisk.c,
+ * g_bake): the medium's grown size, the appended run, and the edited sectors,
+ * each copied into the appended run's spare blocks. Once the kernel has the
+ * machine nothing answers INT 13h, and text-mode setup reads _FALCON.SYS and
+ * the directories through this driver, so it has to serve the same edits. */
+/* What makes the driver a service on the installed system: setup's graphical
+ * phase reads the rest of the CD through it, after a reboot with no loader. */
+static const char XP_INF[] =
+    "[Version]\r\nSignature=\"$Windows NT$\"\r\n\r\n[AddReg]\r\n"
+    "HKLM,\"SYSTEM\\CurrentControlSet\\Services\\falconcd\",\"Type\",0x10001,1\r\n"
+    "HKLM,\"SYSTEM\\CurrentControlSet\\Services\\falconcd\",\"Start\",0x10001,0\r\n"
+    "HKLM,\"SYSTEM\\CurrentControlSet\\Services\\falconcd\",\"ErrorControl\",0x10001,1\r\n"
+    "HKLM,\"SYSTEM\\CurrentControlSet\\Services\\falconcd\",\"Group\",0,\"SCSI CDROM Class\"\r\n"
+    "HKLM,\"SYSTEM\\CurrentControlSet\\Services\\falconcd\",\"ImagePath\",0x20000,"
+    "\"system32\\drivers\\_FALCON.SYS\"\r\n";
+#define XP_BAKE_MAX_EDITS 8u
+#define XP_SPARE_BLOCKS XP_BAKE_MAX_EDITS
+
+/* The PE checksum, which text-mode setup checks on a file it copies and the
+ * bake has just invalidated: 16-bit words summed with carry, the field itself
+ * skipped, plus the file's length. */
+static void xp_pe_checksum(uint8_t *sys, size_t sys_len)
+{
+    uint32_t sum = 0, field;
+    size_t i;
+
+    if (sys_len < 0x40u)
+        return;
+    field = (uint32_t)sys[0x3C] | ((uint32_t)sys[0x3D] << 8) |
+            ((uint32_t)sys[0x3E] << 16) | ((uint32_t)sys[0x3F] << 24);
+    field += 24u + 64u;
+    if ((size_t)field + 4u > sys_len)
+        return;
+    put_le32(sys + field, 0);
+    for (i = 0; i + 1u < sys_len; i += 2u) {
+        sum += (uint32_t)sys[i] | ((uint32_t)sys[i + 1u] << 8);
+        sum = (sum & 0xFFFFu) + (sum >> 16);
+    }
+    if (i < sys_len) {
+        sum += sys[i];
+        sum = (sum & 0xFFFFu) + (sum >> 16);
+    }
+    sum = (sum & 0xFFFFu) + (sum >> 16);
+    put_le32(sys + field, sum + (uint32_t)sys_len);
+}
+
+static int xp_bake_edits(uint8_t *sys, size_t sys_len, uint8_t *app,
+                         uint32_t app_start, uint32_t used_blocks,
+                         uint32_t app_blocks, uint32_t total)
+{
+    uint32_t lbas[XP_BAKE_MAX_EDITS], counts[XP_BAKE_MAX_EDITS];
+    uint8_t *bytes[XP_BAKE_MAX_EDITS];
+    uint32_t spare = used_blocks;
+    unsigned n, e;
+    size_t i, j;
+
+    n = vcd_overlay_list(lbas, counts, bytes, XP_BAKE_MAX_EDITS);
+    if (n > XP_BAKE_MAX_EDITS)
+        return -1;
+    for (i = 0; i + 4116u + 20u + 8u * XP_BAKE_MAX_EDITS <= sys_len; i++) {
+        uint8_t *at;
+
+        for (j = 0; j < 16u; j++)
+            if (sys[i + j] != XP_BAKE_MAGIC[j])
+                break;
+        if (j != 16u)
+            continue;
+        at = sys + i + 4116u;
+        put_le32(at, total);
+        put_le32(at + 4, heap_phys(app));
+        put_le32(at + 8, app_start);
+        put_le32(at + 12, app_blocks);
+        put_le32(at + 16, n);
+        for (e = 0; e < n; e++) {
+            if (counts[e] != 1u || spare >= app_blocks)
+                return -1;
+            memcpy(app + (size_t)spare * BLK, bytes[e], BLK);
+            put_le32(at + 20u + 8u * e, lbas[e]);
+            put_le32(at + 24u + 8u * e, spare);
+            spare++;
+        }
+        xp_pe_checksum(sys, sys_len);
+        return 0;
+    }
+    return -1;
+}
+
+/* Windows XP have no WinPE, so the loader cannot patch a running PE; it
  * injects falcon-vdisk into text-mode setup instead (DESIGN Section 6.3).
  * The served ISO is edited in memory the way the
  * boot.wim relocation edits an ISO 9660-only medium, but the targets are
@@ -640,11 +729,29 @@ static void xp_bake_map(uint8_t *sys, size_t sys_len,
  *   - the PVD volume space size is grown to cover the appended blocks.
  * setupldr reads all of this through the ISO 9660 primary (8.3) tree, which is
  * why the mount and every lookup use it. *not_xp stays 1 when the medium is
- * not 2000/XP media, so the caller boots it as it is. Returns only when it did
+ * not XP media, so the caller boots it as it is. Returns only when it did
  * not boot, with *r filled in.
  *
  * The driver's DriverEntry gets the stick's extents at boot-start from the
  * map xp_bake_map writes into the served .sys, with no winjump. */
+/* The BIOS Data Area's count of hard disks. */
+#define BDA_DISK_COUNT 0x475u
+
+/* Text-mode setup writes its startup files to BIOS disk 0x80 and refuses a disk
+ * with no partition it can use, which is the stick when the stick booted. On
+ * top of the virtual CD, whose own reads go to the BIOS below this, the next
+ * disk is made 0x80 and the stick moves out of the way. */
+static void xp_system_disk(const bios_disk *d)
+{
+    uint16_t seg;
+
+    if (d->drive != 0x80u || peek8(BDA_DISK_COUNT) < 2u)
+        return;
+    seg = lowmem_segment(SWAP_BYTES);
+    if (seg != 0)
+        swap_install(seg, 0x81u);
+}
+
 int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
                 const fs_dirent *iso, boot_result *r, int *not_xp)
 {
@@ -654,7 +761,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     iso9660_file f;
     uint8_t *raw, *app;
     size_t sif_len, grown_len = 0, sys_len = falcon_vdisk_bin_len;
-    uint32_t iso_blocks, sif_start, sys_start, total;
+    uint32_t iso_blocks, sif_start, sys_start, inf_start, inf_blocks, total;
     uint32_t sif_blocks, sys_blocks, app_blocks, blk_lba, new_i386_len;
     /* 33 + strlen("_FALCON.SYS;1") = 46, already even. */
     const uint32_t reclen = 46u;
@@ -680,7 +787,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         i9_child(&dir, "txtsetup.sif", &sif) != 0)
         return -1;
 
-    /* From here it is 2000/XP media, so a failure is a real failure. */
+    /* From here it is XP media, so a failure is a real failure. */
     if (not_xp != (int *)0)
         *not_xp = 0;
     if (sif.parts != 1 || sif.size < 64u)
@@ -693,7 +800,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
      * fail the second alloc. */
     boot_stage(r, "reserving memory for the driver injection");
     heap_reset();
-    if (!heap_open((uint64_t)sif_len * 2u + (uint64_t)sys_len + 0x8000u)) {
+    if (!heap_open((uint64_t)sif_len * 2u + (uint64_t)sys_len + 0x10000u)) {
         r->advice = "this machine has too little memory above 64 MB to inject "
                     "the driver.";
         return -1;
@@ -702,7 +809,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     /* The append region: the grown sif block-padded, then the driver
      * block-padded, served as one run past the ISO's end. */
     app = heap_alloc((uint64_t)sif_len + (uint64_t)sys_len +
-                     0x1000u + 3u * (uint64_t)BLK);
+                     0x1000u + (4u + XP_SPARE_BLOCKS) * (uint64_t)BLK);
     if (raw == (uint8_t *)0 || app == (uint8_t *)0) {
         r->advice = "there is not enough memory to inject the driver.";
         return -1;
@@ -713,6 +820,11 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         iso9660_file_read(&f, 0, sif_len, raw) != ISO9660_OK)
         return -1;
 
+    if (txtsetup_is_win2000((const char *)raw, sif_len)) {
+        r->advice = "Windows 2000 install media is not supported.";
+        return -1;
+    }
+
     boot_stage(r, "injecting the driver into txtsetup.sif");
     if (txtsetup_inject((const char *)raw, sif_len, "falconcd", "_FALCON.SYS",
                         "Falcon Virtual CD", (char *)app,
@@ -721,11 +833,19 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
         return -1;
     }
 
+    /* The installed system's service; media without the section (none seen)
+     * still reach Setup and stop at its graphical phase. */
+    (void)txtsetup_add_hive((char *)app, &grown_len, sif_len + 0x1000u,
+                            "_FALCON.INF", "_FALCON.SYS");
+    (void)txtsetup_usb_boot_start((char *)app, &grown_len, sif_len + 0x1000u);
+
     sif_blocks = (uint32_t)((grown_len + BLK - 1u) / BLK);
     sys_blocks = (uint32_t)((sys_len + BLK - 1u) / BLK);
     sif_start = iso_blocks;
     sys_start = iso_blocks + sif_blocks;
-    app_blocks = sif_blocks + sys_blocks;
+    inf_start = sys_start + sys_blocks;
+    inf_blocks = (uint32_t)((sizeof XP_INF - 1u + BLK - 1u) / BLK);
+    app_blocks = sif_blocks + sys_blocks + inf_blocks + XP_SPARE_BLOCKS;
     total = iso_blocks + app_blocks;
 
     /* Pad the sif to a whole block, lay the driver after it, pad that too. */
@@ -733,6 +853,10 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     memcpy(app + (size_t)sif_blocks * BLK, falcon_vdisk_bin, sys_len);
     memset(app + (size_t)sif_blocks * BLK + sys_len, 0,
            (size_t)sys_blocks * BLK - sys_len);
+    memset(app + (size_t)(sif_blocks + sys_blocks) * BLK, 0,
+           (size_t)inf_blocks * BLK);
+    memcpy(app + (size_t)(sif_blocks + sys_blocks) * BLK, XP_INF,
+           sizeof XP_INF - 1u);
 
     /* Bake the ISO's extent map into the served driver so its DriverEntry can
      * find the stick's disk and the ISO's bytes on it with no winjump. */
@@ -766,7 +890,7 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
      * reader walks past the old end to _FALCON.SYS. Its record is in the root
      * directory (a different block from the sif's record and the .sys append
      * target). */
-    new_i386_len = (uint32_t)i386.size + reclen;
+    new_i386_len = (uint32_t)i386.size + 2u * reclen;
     if (fs_file_read(&g_iso, (uint64_t)i386.rec_lba * BLK, BLK, i386rec) !=
             FS_OK)
         goto no_room;
@@ -777,8 +901,11 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
 
     /* _FALCON.SYS's record, in i386's last-block slack. */
     if (iso9660_append_record(&g_iv_pri, i386.lba, (uint32_t)i386.size,
-                              "_FALCON.SYS;1", sys_start, (uint32_t)sys_len,
-                              dirblk, &blk_lba) != ISO9660_OK) {
+                              "_FALCON.INF;1", inf_start,
+                              (uint32_t)sizeof XP_INF - 1u, dirblk,
+                              &blk_lba) != ISO9660_OK ||
+        iso9660_append_record_in(dirblk, "_FALCON.SYS;1", sys_start,
+                                 (uint32_t)sys_len) != ISO9660_OK) {
         r->advice = "the ISO's i386 directory has no room for the driver's "
                     "record.";
         goto no_room;
@@ -793,11 +920,18 @@ int win_xp_boot(bios_disk *d, fs_vol *p2, const part_entry *p2part,
     if (vcd_overlay_at(blk_lba, dirblk) != 0)
         goto no_room;
 
-    bios_puts("falcon-bios: 2000/XP driver injected, ");
+    bios_puts("falcon-bios: XP driver injected, ");
     bios_put_dec((uint64_t)app_blocks * BLK / 1024u);
     bios_puts(" KiB served\n");
     tui_step(u"booting Windows setup with the virtual-CD driver injected");
+    if (xp_bake_edits(app + (size_t)sif_blocks * BLK, sys_len, app, sif_start,
+                      sif_blocks + sys_blocks + inf_blocks, app_blocks,
+                      total) != 0) {
+        r->advice = "this ISO's i386 layout is one this loader does not edit.";
+        goto no_room;
+    }
     boot_stage(r, "booting");
+    vcd_before_handover = xp_system_disk;
     return vcd_chainload(d, p2, p2part, iso, &g_iso, r);
 
 no_room:
