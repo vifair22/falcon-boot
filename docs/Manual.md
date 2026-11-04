@@ -1361,8 +1361,11 @@ What was applied is in the log, as `options:` lines.
 
 **Windows Vista and 7.** Their WinPE cannot attach an ISO. falcon-winjump
 loads falcon-vdisk, a driver that serves the ISO as a CD-ROM from the
-stick's disk, and Setup finds its files there. The driver loads in 32-bit
-WinPE.
+stick's disk, and Setup finds its files there.
+
+Setup can start before WinPE has the stick. If it then says `A required CD/DVD
+drive device driver is missing`, cancel the dialog, wait a few seconds and
+press Install now again.
 
 **Windows XP** (BIOS loader only). The media has no `boot.wim`, so
 `WIN` falls through to `WXP`: the loader adds falcon-vdisk to text-mode

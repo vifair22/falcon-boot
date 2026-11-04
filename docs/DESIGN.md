@@ -1068,7 +1068,10 @@ second time for i686 for 32-bit media. The served `boot.wim` has
 alongside it as `winpeshl_orig.exe` (Section 6.4). At runtime winjump
 attaches the ISO read-only from the library partition and then executes the
 original `winpeshl.exe`, so Windows Setup proceeds as it would have and
-finds `install.wim` on a real, mounted CD-ROM. The image patched is the one
+finds `install.wim` on a real, mounted CD-ROM. With no stick after 30 s, it
+starts the shell anyway and keeps looking on a thread, trying again each time
+the drive letters or the disks change: Windows 7's WinPE has been seen to get a
+USB stick later than that. The image patched is the one
 the WIM header names as bootable (`falcon-core/src/wim/wim.c`), index 2
 (Setup) on Win11 25H2. winjump suppresses the critical-error dialog an empty
 floppy drive raises when it probes drives (`SEM_FAILCRITICALERRORS`).
@@ -1098,10 +1101,9 @@ XP Setup, none of which enforces it:
 
 - 32-bit WinPE, which every 32-bit Windows installer boots, enforces no
   kernel-mode code signing: the unsigned `falcon-vdisk` loads.
-- The driver runs in 32-bit WinPE only. On BIOS the resident CD (below)
-  makes it unnecessary for 64-bit media; on UEFI the corpus's 64-bit media
-  older than 8 fail before WinPE, with no EFI System Partition found on the
-  medium (docs/coverage.md).
+- 64-bit WinPE loaded it too on the one case seen, Windows 7 RTM x64 on BIOS
+  from a USB stick. On UEFI the corpus's 64-bit media older than 8 fail before
+  WinPE, with no EFI System Partition found on the medium (docs/coverage.md).
 
 On BIOS the ISO is a resident INT 13h CD that never vanishes, so WinPE
 reaches winpeshl and winjump runs; the BIOS winjump config carries the
@@ -3292,6 +3294,9 @@ sequenceDiagram
     W->>W: OpenVirtualDisk, AttachVirtualDisk (read-only, permanent)
     W->>W: falcon\windows.cfg: LabConfig bypass, unattend
     W->>ST: winpeshl_orig.exe
+    opt no stick after the 30 s
+        W->>W: media_watch: the same again each time the storage changes
+    end
     Note over ST: install.wim found on the attached CD
 ```
 
@@ -3776,8 +3781,11 @@ sequenceDiagram
     R->>R: tail blocks copied down with INT 15h AH=87h
     M->>M: RAM disk, NT kernel, the handler is no longer called
     M->>W: winpeshl.exe = winjump
-    W->>W: find_iso, AttachVirtualDisk, windows.cfg
+    W->>W: find_iso, AttachVirtualDisk, windows.cfg; then the driver
     W->>ST: winpeshl_orig.exe
+    opt no stick after the 30 s
+        W->>W: media_watch: the same again each time the storage changes
+    end
     Note over ST: install.wim found on the attached CD
 ```
 

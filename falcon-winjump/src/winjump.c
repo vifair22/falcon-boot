@@ -646,8 +646,12 @@ static BOOL find_iso_once(const struct cfg *cfg, const wchar_t *rel,
 #define FIND_DEADLINE_MS  30000u
 #define FIND_INTERVAL_MS    500u
 #define FIND_HEARTBEAT_MS  5000u
+#define MEDIA_WATCH_MS     1000u
+#define MEDIA_SETTLE_MS    2000u
 
-static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap)
+/* One pass and no wait when deadline_ms is 0. */
+static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap,
+                     DWORD deadline_ms)
 {
     wchar_t rel[MAX_PATH];
     /* Two buffers rather than one: the drive set is re-enumerated every pass,
@@ -676,7 +680,7 @@ static BOOL find_iso(const struct cfg *cfg, wchar_t *out, int cap)
         lstrcpynW(prev_seen, seen, SEEN_CAP);
 
         now = GetTickCount64();
-        if (now - start >= FIND_DEADLINE_MS) {
+        if (now - start >= deadline_ms) {
             char a[24];
 
             jlog("scan: no volume carries %s after %s ms and %u passes",
@@ -1169,10 +1173,78 @@ static int launch_shell(const wchar_t *dir, const struct cfg *cfg)
     return (int)code;
 }
 
+/*
+ * VirtDisk first (Windows 8+, when the ISO's volume is readable), then the
+ * driver (Vista and 7, whose WinPE has neither ISO support nor a way to read
+ * the exFAT partition the ISO lives on).
+ */
+static BOOL present_media(const struct cfg *cfg, DWORD deadline_ms)
+{
+    wchar_t iso[MAX_PATH];
+    BOOL mounted = FALSE;
+
+    if (enable_manage_volume() && find_iso(cfg, iso, MAX_PATH, deadline_ms)) {
+        mounted = attach_iso(iso);
+        apply_stick_options(iso);
+    }
+    if (!mounted) {
+        jlog("winjump: VirtDisk did not mount the ISO; trying the driver");
+        mounted = mount_via_driver(cfg);
+    }
+    return mounted;
+}
+
+/* Drive letters in bits 0-25, the count of physical disks above them. */
+static DWORD storage_stamp(void)
+{
+    DWORD stamp = GetLogicalDrives() & 0x03FFFFFFu;
+    DWORD n;
+
+    for (n = 0; n < 32u; n++) {
+        wchar_t phys[32];
+        HANDLE h;
+
+        wsprintfW(phys, L"\\\\.\\PhysicalDrive%lu", (unsigned long)n);
+        h = CreateFileW(phys, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                        OPEN_EXISTING, 0, NULL);
+        if (h == INVALID_HANDLE_VALUE)
+            continue;
+        CloseHandle(h);
+        stamp += 1u << 26;
+    }
+    return stamp;
+}
+
+/*
+ * The stick can arrive after find_iso's deadline: on a T430, Windows 7's WinPE
+ * did not have a USB 2 stick after 30 s and had it by the time Setup asked for
+ * its media. This keeps looking for as long as the shell runs, and tries again
+ * each time the storage changes. Setup looks for its media when Install is
+ * pressed, and its Rescan looks again.
+ */
+static DWORD WINAPI media_watch(void *arg)
+{
+    const struct cfg *cfg = arg;
+    DWORD stamp = 0;
+
+    for (;;) {
+        Sleep(MEDIA_WATCH_MS);
+        if (storage_stamp() == stamp)
+            continue;
+        /* A disk's volumes follow it, and VirtDisk wants the volume. */
+        Sleep(MEDIA_SETTLE_MS);
+        stamp = storage_stamp();
+        jlog("watch: the storage changed; looking again");
+        if (present_media(cfg, 0)) {
+            jlog("watch: media presented");
+            return 0;
+        }
+    }
+}
+
 static int winjump_main(void)
 {
     wchar_t dir[MAX_PATH];
-    wchar_t iso[MAX_PATH];
     struct cfg cfg;
 
     memset(&cfg, 0, sizeof cfg);
@@ -1197,26 +1269,23 @@ static int winjump_main(void)
 
     /* From here every failure is logged and then ignored: a WinPE with no
      * media still has Shift+F10 and this log, and is worth a great deal more
-     * than a machine that reboots without a shell.
-     *
-     * VirtDisk first (Windows 8+, when the ISO's volume is readable), then the
-     * driver (Vista and 7, whose WinPE has neither ISO support nor a way to
-     * read the exFAT partition the ISO lives on). */
+     * than a machine that reboots without a shell. */
     {
-        BOOL mounted = FALSE;
         BOOL have_cfg = read_cfg(dir, &cfg);
 
-        if (have_cfg && enable_manage_volume() &&
-            find_iso(&cfg, iso, MAX_PATH)) {
-            mounted = attach_iso(iso);
-            apply_stick_options(iso);
-        }
-        if (!mounted && have_cfg) {
-            jlog("winjump: VirtDisk did not mount the ISO; trying the driver");
-            mounted = mount_via_driver(&cfg);
-        }
-        if (!mounted)
+        if (!have_cfg || !present_media(&cfg, FIND_DEADLINE_MS)) {
             jlog("winjump: no media presented; launching the shell anyway");
+            /* cfg outlives the thread: launch_shell waits for the shell, and
+             * the shell's end is the end of the process. */
+            if (have_cfg) {
+                HANDLE t = CreateThread(NULL, 0, media_watch, &cfg, 0, NULL);
+
+                if (t == NULL)
+                    jlog("watch: CreateThread failed, err=%lu", GetLastError());
+                else
+                    CloseHandle(t);
+            }
+        }
     }
 
     return launch_shell(dir, &cfg);
