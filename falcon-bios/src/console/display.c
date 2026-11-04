@@ -20,8 +20,10 @@
  * characters 0x01-0x04, which nothing here prints, with the BIOS's own call
  * (INT 10h AX=1100h), and the ROM's glyphs for them go back the same way
  * before a payload has the screen. Only when the BIOS says where its ROM
- * font is (AX=1130h): without that they could not go back, and the frames
- * are the font's | / - \ instead. A frame lasts five ticks of the BIOS
+ * font is (AX=1130h) and the frames read back from the font's plane: without
+ * the first they could not go back, without the second the screen would show
+ * the ROM's own 0x01-0x04, and either way the frames are the font's | / - \
+ * instead. A frame lasts five ticks of the BIOS
  * clock, 275 ms, the nearest the 18.2 Hz tick comes to 250. Its frames
  * stay off the serial mirror: a tick lands inside a read, where it would
  * split a diagnostic line half written with bios_puts.
@@ -36,6 +38,9 @@
 #include <tui/tui.h>
 
 #define VGA_TEXT  0xB8000u
+#define VGA_FONT  0xA0000u
+#define VGA_SEQ   0x3C4u
+#define VGA_GC    0x3CEu
 #define COLS      ((size_t)80u)
 #define ROWS      ((size_t)25u)
 #define BDA_TICKS 0x46Cu
@@ -159,6 +164,64 @@ static void font_find(void)
     g_rom_off = thunk_regs.bp;
 }
 
+static uint8_t vga_get(uint16_t port, uint8_t index)
+{
+    outb(port, index);
+    return inb((uint16_t)(port + 1u));
+}
+
+static void vga_set(uint16_t port, uint8_t index, uint8_t v)
+{
+    outb(port, index);
+    outb((uint16_t)(port + 1u), v);
+}
+
+/* Whether the frames are in font block 0, read from plane 2 at 32 bytes a
+ * character. AX=1100h does not say: SeaVGABIOS built for coreboot's graphics
+ * init returns from it having done nothing. A machine with no VGA behind
+ * these ports reads back something else, which is the same answer. */
+static int spin_font_took(void)
+{
+    const volatile uint8_t *font = (const volatile uint8_t *)(uintptr_t)VGA_FONT;
+    uint8_t sr2 = vga_get(VGA_SEQ, 2u);
+    uint8_t sr4 = vga_get(VGA_SEQ, 4u);
+    uint8_t gr4 = vga_get(VGA_GC, 4u);
+    uint8_t gr5 = vga_get(VGA_GC, 5u);
+    uint8_t gr6 = vga_get(VGA_GC, 6u);
+    int took = 1;
+    size_t k;
+    size_t r;
+
+    vga_set(VGA_SEQ, 0u, 0x01u);            /* synchronous reset */
+    vga_set(VGA_SEQ, 2u, 0x04u);
+    vga_set(VGA_SEQ, 4u, 0x07u);            /* sequential, not odd/even */
+    vga_set(VGA_SEQ, 0u, 0x03u);
+    vga_set(VGA_GC, 4u, 0x02u);             /* read plane 2 */
+    vga_set(VGA_GC, 5u, 0x00u);
+    vga_set(VGA_GC, 6u, 0x04u);             /* at 0xA0000, not text */
+    for (k = 0; k < TUI_SPIN_N; k++)
+        for (r = 0; r < 16u; r++)
+            if (font[(SPIN_CHAR + k) * 32u + r] != tui_spin_vga[k][r])
+                took = 0;
+    vga_set(VGA_SEQ, 0u, 0x01u);
+    vga_set(VGA_SEQ, 2u, sr2);
+    vga_set(VGA_SEQ, 4u, sr4);
+    vga_set(VGA_SEQ, 0u, 0x03u);
+    vga_set(VGA_GC, 4u, gr4);
+    vga_set(VGA_GC, 5u, gr5);
+    vga_set(VGA_GC, 6u, gr6);
+    return took;
+}
+
+static void spin_font_out(void)
+{
+    if (!g_spin_font)
+        return;
+    font_load(g_rom_seg, (uint16_t)(g_rom_off + SPIN_CHAR * 16u), SPIN_CHAR,
+              TUI_SPIN_N);
+    g_spin_font = 0;
+}
+
 static void spin_font_in(void)
 {
     uint8_t *at = (uint8_t *)(uintptr_t)FONT_ADDR;
@@ -172,15 +235,10 @@ static void spin_font_in(void)
             at[k * 16u + r] = tui_spin_vga[k][r];
     font_load(0, (uint16_t)FONT_ADDR, SPIN_CHAR, TUI_SPIN_N);
     g_spin_font = 1;
-}
-
-static void spin_font_out(void)
-{
-    if (!g_spin_font)
-        return;
-    font_load(g_rom_seg, (uint16_t)(g_rom_off + SPIN_CHAR * 16u), SPIN_CHAR,
-              TUI_SPIN_N);
-    g_spin_font = 0;
+    if (!spin_font_took()) {
+        spin_font_out();
+        bios_puts("falcon-bios: the video BIOS did not load the spinner's glyphs\n");
+    }
 }
 
 static uint32_t tenths_since(cdclock *c)
