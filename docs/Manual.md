@@ -1304,10 +1304,11 @@ with the last one's rate:
 
 The milliseconds are the firmware's alone. A boot rate far under what the
 stick does in Linux, or a `startup` that takes tens of milliseconds a call
-for a few KiB each, is the firmware's USB driver, not the stick: the same
-stick on another machine shows the difference. The line above is an ASUS
-B550's AMI firmware with a Kingston DataTraveler Max, which costs about
-70 ms for every 64 KiB.
+for a few KiB each, is the firmware's USB driver with that stick: try another
+stick on the same port. The line above is an ASUS B550's AMI firmware with a
+Kingston DataTraveler Max, which costs about 70 ms for every 64 KiB. That stick
+is slow through firmware on every machine it has been tried on, at 0.24 MB/s
+on a ThinkPad T430's Lenovo firmware, where a Corsair Voyager GTX is fine.
 
 Booted from a route that is not a UKI (an ISO, Windows, memtest86+), the
 exec time and the wait are not written, and systemd-analyze shows neither
