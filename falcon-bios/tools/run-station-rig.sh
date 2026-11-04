@@ -47,6 +47,11 @@
 #              machine powered off (APM, which SeaBIOS answers with ACPI
 #              S5), QEMU exiting by itself (DESIGN Section 7.9)
 #   idle-no-ticks  the same through tickstop: timed by the RTC alone
+#   spin-font  the frames read back from the font, nothing said about them,
+#              and the VGA registers back: the menu is in the saved text
+#   spin-nofont  an option ROM (tools/nofont.S) that swallows AX=1100h, as
+#              SeaVGABIOS built for coreboot does: the sentence, and the
+#              boot goes on
 #
 # Usage: falcon-bios/tools/run-station-rig.sh [case...]   (default: all)
 # Env:   MEMTEST  memtest86+ for the mem case (skipped without it)
@@ -70,7 +75,7 @@ SIG_B=5a7a0b02
 ID=f41c0b1057a6e0000000000000000010
 
 mkdir -p "$R"
-make --no-print-directory station build/rigboot.bin build/tickstop.bin "$MKSTICK" >/dev/null
+make --no-print-directory station build/rigboot.bin build/tickstop.bin build/nofont.rom "$MKSTICK" >/dev/null
 
 def() {       # def NAME: its value in biosdefs.h, hex or decimal
     local v
@@ -207,6 +212,7 @@ boot() {      # boot NAME UNTIL SECONDS DISK0 [DISK1]
         order=a
     fi
     rm -f "$R/serial.log" "$R/mon.sock" "$R/$name.vga" "$R/$name.png"
+    [[ -n "${OPTROM:-}" ]] && drives+=(-option-rom "$OPTROM")
     "$QEMU" -L /usr/share/qemu -machine pc -cpu pentium3 -m 128 \
         -display none -boot "$order" "${drives[@]}" -rtc base=utc \
         -serial file:"$R/serial.log" \
@@ -272,7 +278,7 @@ run_rig_case() {  # run_rig_case NAME INI [MARKER]
 CASES=("$@")
 [[ ${#CASES[@]} -gt 0 ]] ||
     CASES=(own-p1 own-p2 logical b-p1-swap b-p1-noswap b-mbr default-sel ini-error
-           next-boot next-miss mem no-ticks idle idle-no-ticks)
+           next-boot next-miss mem no-ticks idle idle-no-ticks spin-font spin-nofont)
 
 build_disks
 
@@ -372,6 +378,24 @@ for c in "${CASES[@]}"; do
             $'[general]\ndefault = mbr-'"$SIG_A"$'-p1\ntimeout = 3\n'
         judge no-ticks 'TICKSTOP: IRQ0 masked' 'Booting in 3' 'Booting in 1' \
             "RIGBOOT dl=80 dssi=0000:07be"
+        ;;
+    spin-font)
+        case_ini spin-font $'[general]\ndefault = mbr-'"$SIG_A"$'-p1\ntimeout = 9\n'
+        boot spin-font 'Booting in [0-9]' "$TIMEOUT" "$R/a-run.img" "$R/b-run.img"
+        if grep -aq "did not load the spinner" "$R/serial.txt"; then
+            fail spin-font "the frames did not read back on QEMU's VGA"
+        elif python3 -c 'import sys; sys.exit(b"Booting in" not in open(sys.argv[1], "rb").read()[::2])' \
+                "$R/spin-font.vga"; then
+            pass spin-font "the frames loaded, and the menu is in text memory"
+        else
+            fail spin-font "no menu in text memory: the VGA registers did not come back"
+        fi
+        ;;
+    spin-nofont)
+        OPTROM=build/nofont.rom run_rig_case spin-nofont \
+            $'[general]\ndefault = mbr-'"$SIG_A"$'-p1\ntimeout = 1\n'
+        judge spin-nofont "the video BIOS did not load the spinner's glyphs" \
+            'Booting in 1' "RIGBOOT dl=80"
         ;;
     idle|idle-no-ticks)
         FLOPPY=
