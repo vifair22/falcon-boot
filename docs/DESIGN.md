@@ -2251,7 +2251,9 @@ and an 8x19 drawing). falcon-core puts them at the private use code points
 U+E000 to U+E003, and a display loads them. falcon-bios writes them over
 code page 437's 0x01 to 0x04 with INT 10h AX=1100h, and only when AX=1130h
 gives the ROM font, whose glyphs go back the same way at the hand-off and
-which a mode set restores. The UEFI loader adds them to the firmware's
+which a mode set restores. It keeps them only when they read back from the
+font's plane, since SeaVGABIOS built for coreboot's graphics init answers the
+call without loading anything. The UEFI loader adds them to the firmware's
 fonts as an HII simple font package, kept only when the console's
 TestString accepts them (edk2's graphics console draws through the HII
 database; a serial terminal or a firmware's own console driver does not),
