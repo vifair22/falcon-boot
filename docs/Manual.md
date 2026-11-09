@@ -1417,7 +1417,23 @@ station shows once it is there. `/dev/X` is the machine's disk.
 
 ### 7.2 Free space
 
-The installer resizes nothing. A BIOS station needs a partition of its own,
+The installer resizes and reformats nothing. On a disk with an ESP, the BIOS
+station goes in the ESP's reserved sectors, as on a stick, and takes no other
+space. A normal ESP has 32 reserved sectors and the station needs 2080, and
+FAT cannot grow them in place. Format the ESP with them, ideally before
+anything is on it:
+
+```sh
+mount /dev/X1 /mnt && cp -a /mnt ~/esp.bak && umount /mnt
+mkfs.fat -F 32 -R 2080 /dev/X1
+mount /dev/X1 /mnt && cp -a ~/esp.bak/. /mnt/ && umount /mnt
+```
+
+Formatting gives the ESP a new volume serial, and an ESP that held a station
+loses its record, so a station on it is installed again. `falcon-boot-mkstick
+ident --reserved-sectors --stage3 <file>` prints the count for a given stage 3.
+
+On a disk with no ESP, a BIOS station needs a partition of its own,
 64 MiB by default and 40 MiB at least (288 and 272 MiB on a disk of
 4096-byte sectors), in space no partition holds, and on MBR a free primary
 slot; it refuses and says how much it needs when there is none. On a disk
@@ -1430,7 +1446,8 @@ echo '63,<new size in sectors>,7,*' | sfdisk -N 1 /dev/X
 ```
 
 Windows runs chkdsk once on its next boot. A UEFI station needs no new
-partition: it goes into the machine's ESP, which must not be mounted.
+partition: it goes into the machine's ESP, which must not be mounted, and any
+ESP will do.
 
 ### 7.3 Install
 
@@ -1439,14 +1456,26 @@ falcon-boot-mkstick station install /dev/X --dry-run
 falcon-boot-mkstick station install /dev/X --backup station.bak
 ```
 
-The dry run prints the plan: where the station partition goes, the stage
+The dry run prints the plan: where the BIOS station goes, the stage
 sectors, the `STATION.INI` it will write and any disk signature it will
-give. Both firmwares are installed where the disk allows it; `--bios` or
+give. Both firmwares are installed where the disk allows it, so an ESP without
+the reserved sectors gets UEFI alone and the plan says why; `--bios` or
 `--uefi` asks for one. `--shelf` names the shelf the station boots Linux
 from, which is stamped with the station's install ID. Keep the backup file
 off the disk it describes. The full option list, what is written where and
 every refusal are under `falcon-boot-mkstick station` in the mkstick
 reference.
+
+To add the other firmware to a station that has one, name it:
+
+```sh
+falcon-boot-mkstick station install /dev/X --bios --dry-run
+falcon-boot-mkstick station install /dev/X --bios --backup station-bios.bak
+```
+
+The install ID and the shelf stay as they are. If `[totp]` seals PCR 5 and the
+add creates the `FALCON-BIOS` partition, it changes what PCR 5 measures: boot
+the UEFI station and run `station totp reseal`, as the install says.
 
 The installer writes `STATION.INI` from what it finds on the machine's
 disks: the first Windows or DOS is the default (else the first UKI on the
@@ -2598,9 +2627,9 @@ ESP's and the shelf's.
 
 | option | default | what it does |
 |---|---|---|
-| `--bios`, `--uefi` | both, where the disk allows | which station to install |
+| `--bios`, `--uefi` | both, where the disk allows | which station to install; on a station with one half, the one to add |
 | `--arch` | this machine's | the machine the station boots: `x64`, or `aa64`, whose station is UEFI only and whose names are `falconaa64.efi`, `BOOTAA64.EFI` and `shimaa64.efi`; `--bios` and `--legacy` are refused with it |
-| `--size` | 64 (288 on a 4Kn disk) | the station partition's size in MiB, at least 40 (272 on a 4Kn disk), at most 4096 |
+| `--size` | 64 (288 on a 4Kn disk) | the station partition's size in MiB, at least 40 (272 on a 4Kn disk), at most 4096; refused on a disk with an ESP, which has no station partition |
 | `--shelf` | none: the station offers no Linux | the shelf: `n` is partition n of `<disk>`, `disk:n` partition n of another disk, anything else a partition node; it is stamped with the install ID |
 | `--esp` | the disk's ESP | the ESP's partition number |
 | `--memtest` | none | memtest86+ (x86 boot protocol build) for the BIOS station, as `MEMTEST.BIN` |
@@ -2612,7 +2641,7 @@ ESP's and the shelf's.
 | `--mods` | `build/bin/mod`; in a release, `/usr/lib/falcon-boot/bin/mod` | with `--legacy`: the drivers' directory |
 | `--also` | none | another disk or image of the same machine, scanned for systems; repeatable |
 | `--no-scan` | off | scans only `<disk>` and `--also`, not every disk of this machine |
-| `--backup` | `falcon-station-backup-<disk>.bin` | where everything it changes is saved first |
+| `--backup` | `falcon-station-backup-<disk>.bin`; adding a half, `falcon-station-backup-<disk>-bios.bin` or `-uefi.bin` | where everything it changes is saved first |
 | `--force` | off | overwrites an existing backup file |
 | `--dry-run` | off | prints the plan and STATION.INI, writes nothing |
 | `--stage1` | `build/bin/falcon-bios-stage1.bin` | |
@@ -2627,7 +2656,23 @@ notes each partition that looks like a shelf and the `--shelf disk:n` that
 would name it. A locked shelf's UKIs are rows at boot; `--passphrase-file`
 lets STATION.INI name one as the default.
 
-**BIOS.** What it writes:
+**Adding a half.** On a disk with one half of a station, `--bios` or
+`--uefi` adds the other. It keeps the install ID and reads the shelf carrying
+that ID when `--shelf` is not given. It refuses with no flag (and says which
+flag), with both flags, for the half already there, on a disk with both, and on
+a disk whose boot record is not a station's. The added half has its own backup,
+and `remove` with that file takes off that half alone. A UEFI install's backup
+predates a BIOS half added later: `remove` with it keeps LBA 0 and the ESP's
+record, so the BIOS station goes on booting, and refuses `--full`.
+
+**BIOS on a disk with an ESP.** Stage 3 and the marker go in the ESP's reserved
+sectors, its boot record names them, and `STATION.INI`, `MEMTEST.BIN`
+(`--memtest`) and with `--legacy` the drivers and `/uki` go at its root. Stage 2
+and stage 1 are as below; there is no station partition. An ESP without the
+reserved sectors is refused with the `mkfs.fat -R` count (7.2). A station
+partition from an older install stays valid.
+
+**BIOS on a disk with no ESP.** What it writes:
 
 | what | MBR disk | GPT disk |
 |---|---|---|

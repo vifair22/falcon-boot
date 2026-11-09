@@ -10,7 +10,8 @@
  *
  * What it writes, by firmware:
  *
- *   BIOS  the station partition in free space (MBR: a primary of type 0x1C;
+ *   BIOS  on a disk with an ESP, the ESP's reserved sectors, as on a stick;
+ *         otherwise the station partition in free space (MBR: a primary of type 0x1C;
  *         GPT: the falcon boot type, with the FALCON-BIOS EF02 partition at
  *         LBA 34 made for stage 2 when the disk has none), FAT32 with room
  *         in its reserved sectors, its boot record, STATION.INI and the
@@ -30,7 +31,9 @@
  *
  * Both are written by default where the disk allows them (an ESP for UEFI;
  * room before the first partition for BIOS's stage 2). The station's
- * install ID is new; the shelf it is pointed at is stamped with it.
+ * install ID is new; the shelf it is pointed at is stamped with it. On a disk
+ * with one half, --bios or --uefi adds the other under the same install ID,
+ * touching nothing of the half that is there.
  */
 
 #include <mkstick/station.h>
@@ -202,6 +205,87 @@ static cli_status shelf_resolve(const char *spec, const stn_scan *s,
     out->disk_is_block = d.is_block;
     out->number = (uint32_t)n;
     return CLI_OK;
+}
+
+/* ---- what is already on the disk ---- */
+
+/* The halves as `update` tells them (DESIGN Section 12.14): a BIOS station is
+ * the boot record naming a stage 3 with STATION.INI at its root; a UEFI
+ * station is the ESP's record with \EFI\falcon\STATION.INI. One partition
+ * can be both. */
+static int stn_bios_station(const stn_disk *td)
+{
+    static char text[16384];
+    int b = records_bios_boot(&td->r);
+    size_t got = 0;
+
+    if (b < 0)
+        return 0;
+    return stn_read_file(td->d.path, td->r.parts[b].start_lba * td->d.sector,
+                         (td->r.parts[b].end_lba - td->r.parts[b].start_lba +
+                          1u) * td->d.sector,
+                         "/" STATIONINI_FILE, text, sizeof text, &got) == FS_OK;
+}
+
+/* The ESP's index, or -1. */
+static int stn_uefi_station(const stn_disk *td)
+{
+    static char text[16384];
+    int e = stn_find_esp(&td->r);
+    size_t got = 0;
+
+    if (e < 0 || td->r.recs[e].state != REC_OK ||
+        td->r.recs[e].rec.role != IDENT_ROLE_BOOT)
+        return -1;
+    if (stn_read_file(td->d.path, td->r.parts[e].start_lba * td->d.sector,
+                      (td->r.parts[e].end_lba - td->r.parts[e].start_lba +
+                       1u) * td->d.sector,
+                      "/" STN_ESP_DIR "/" STATIONINI_FILE, text, sizeof text,
+                      &got) != FS_OK)
+        return -1;
+    return e;
+}
+
+/* The PCRs the UEFI station's [totp] seals, 0 for none. */
+static uint32_t stn_uefi_totp_pcrs(const stn_disk *td, int esp)
+{
+    static char text[16384];
+    static stationini ini;
+    size_t got = 0;
+
+    if (esp < 0 ||
+        stn_read_file(td->d.path, td->r.parts[esp].start_lba * td->d.sector,
+                      (td->r.parts[esp].end_lba - td->r.parts[esp].start_lba +
+                       1u) * td->d.sector,
+                      "/" STN_ESP_DIR "/" STATIONINI_FILE, text, sizeof text,
+                      &got) != FS_OK ||
+        stationini_parse(text, got, &ini) != 0 || !ini.totp.present)
+        return 0;
+    return ini.totp.pcrs;
+}
+
+/* The `--shelf` spelling of the shelf carrying this install's ID, on any disk
+ * scanned; empty for none. An add has the shelf the install already has. */
+static void stn_installs_shelf(const stn_scan *s, const uint8_t *id,
+                               char *out, size_t cap)
+{
+    size_t k;
+    uint32_t j;
+
+    out[0] = '\0';
+    for (k = 0; k < s->n_disks; k++) {
+        const mks_records *r = &s->disks[k].r;
+
+        for (j = 0; j < r->table.count; j++) {
+            if (r->recs[j].state == REC_OK &&
+                r->recs[j].rec.role == IDENT_ROLE_SHELF &&
+                memcmp(r->recs[j].rec.install_id, id, IDENT_ID_LEN) == 0) {
+                (void)snprintf(out, cap, "%s:%u", s->disks[k].d.path,
+                               r->parts[j].number);
+                return;
+            }
+        }
+    }
 }
 
 /* A shelf's record, read with the loaders' code; and whether it is LUKS2. */
@@ -550,6 +634,7 @@ typedef struct {
     unsigned   ef02_slot;
     uint32_t   reserved;
     bios_plan  bplan;
+    int        esp_bios;        /* the BIOS half is, or goes, on the ESP */
     /* UEFI */
     int        esp;             /* index in the target's records */
     bios_fat   esp_fat;
@@ -583,8 +668,8 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
     const mks_records *r = &td->r;
     uint32_t sec = td->d.sector;
     uint64_t disk_sectors = td->d.size / sec;
-    uint64_t lo;
-    uint64_t hi;
+    uint64_t lo = 0;
+    uint64_t hi = 0;
     uint64_t largest = 0;
     uint64_t largest4k = 0;
     bios_disk bd;
@@ -607,7 +692,27 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
             p->first_real = e->start_lba;
     }
 
-    if (r->table.id.kind == PART_KIND_MBR) {
+    p->esp_bios = p->esp >= 0;
+    if (p->esp_bios) {
+        const part_entry *e = &r->parts[p->esp];
+        uint8_t sec0[512];
+        disk_io io;
+        cli_status rc = disk_io_open(&io, td->d.path, e->start_lba * sec,
+                                     sizeof sec0);
+
+        if (rc != CLI_OK)
+            return rc;
+        if (disk_io_read(&io, 0, sizeof sec0, sec0) != 0 ||
+            bioscore_fat_bpb(sec0, &p->esp_fat) != BIOSCORE_OK ||
+            !p->esp_fat.fat32) {
+            disk_io_close(&io);
+            return set_error(CLI_ERR_INVALID, "partition %u of %s is not a "
+                             "FAT32 ESP", e->number, td->d.path);
+        }
+        disk_io_close(&io);
+        p->region.start = e->start_lba;
+        p->region.sectors = e->end_lba - e->start_lba + 1u;
+    } else if (r->table.id.kind == PART_KIND_MBR) {
         p->slot = stn_mbr_free_slot(td->lba0);
         if (p->slot == 0u)
             return set_error(CLI_ERR_RANGE, "%s: the MBR's four primary "
@@ -624,13 +729,17 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
         hi = r->table.last_usable;
     }
 
-    st = stn_find_free(&r->table, lo, hi, want,
-                       stn_align_for(STN_ALIGN_MIB, sec), &p->region,
-                       &largest);
-    if (st == STN_ERR_NOSPACE)
+    if (p->esp_bios) {
+        st = STN_OK;
+    } else {
         st = stn_find_free(&r->table, lo, hi, want,
-                           stn_align_for(STN_ALIGN_4K, sec), &p->region,
-                           &largest4k);
+                           stn_align_for(STN_ALIGN_MIB, sec), &p->region,
+                           &largest);
+        if (st == STN_ERR_NOSPACE)
+            st = stn_find_free(&r->table, lo, hi, want,
+                               stn_align_for(STN_ALIGN_4K, sec), &p->region,
+                               &largest4k);
+    }
     if (st != STN_OK) {
         (void)util_format_size(want * sec, need, sizeof need);
         (void)util_format_size((largest4k > largest ? largest4k : largest) *
@@ -667,8 +776,10 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
             p->ef02_end = gap_end;
             p->ef02_slot = gpt_free_number(r, 0);
         }
-        p->slot = gpt_free_number(r, p->ef02_slot);
-        if (p->slot == 0u || (p->make_ef02 && p->ef02_slot == 0u))
+        if (!p->esp_bios)
+            p->slot = gpt_free_number(r, p->ef02_slot);
+        if ((!p->esp_bios && p->slot == 0u) ||
+            (p->make_ef02 && p->ef02_slot == 0u))
             return set_error(CLI_ERR_RANGE, "%s: the GPT has no free entry",
                              td->d.path);
     }
@@ -678,9 +789,20 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
         return set_error(CLI_ERR_RANGE, "stage 3 is too large for a FAT "
                          "reserved area");
 
-    /* The plan the stick's own `bios` makes, over the partition as it
-     * will be: its FAT is described from the mkfs.fat line below, and
-     * checked against the real one once it exists. */
+    /* Before the plan, which takes a normal ESP's 32 sectors for a record
+     * pointing at FAT's own. */
+    if (p->esp_bios &&
+        p->esp_fat.reserved < BOOTPART_STAGE3_SECTOR + (l3 + sec - 1u) / sec)
+        return set_error(CLI_ERR_RANGE, "the ESP (partition %u) has %u "
+                         "reserved sectors and the BIOS station needs %u: "
+                         "copy its files off, format it with mkfs.fat -F 32 "
+                         "-R %u, and copy them back",
+                         r->parts[p->esp].number, (unsigned)p->esp_fat.reserved,
+                         (unsigned)p->reserved, (unsigned)p->reserved);
+
+    /* The plan the stick's own `bios` makes, over the partition as it is or
+     * will be: a new one's FAT is described from the mkfs.fat line below,
+     * and checked against the real one once it exists. */
     memset(&bd, 0, sizeof bd);
     bd.sector_bytes = td->d.sector;
     bd.kind = r->table.id.kind;
@@ -690,11 +812,15 @@ static cli_status plan_bios(const stn_disk *td, uint64_t want, size_t l2,
         bd.first_part_lba = p->region.start;
     bd.boot_start = p->region.start;
     bd.boot_sectors = p->region.sectors;
-    bd.fat.sector = td->d.sector;
-    bd.fat.reserved = p->reserved;
-    bd.fat.fsinfo = 1;
-    bd.fat.backup = 6;
-    bd.fat.fat32 = 1;
+    if (p->esp_bios) {
+        bd.fat = p->esp_fat;
+    } else {
+        bd.fat.sector = td->d.sector;
+        bd.fat.reserved = p->reserved;
+        bd.fat.fsinfo = 1;
+        bd.fat.backup = 6;
+        bd.fat.fat32 = 1;
+    }
     bd.stage3_sector = BOOTPART_STAGE3_SECTOR;
     bd.marker_sector = BOOTPART_MARKER_SECTOR;
     bs = bioscore_plan(&bd, bd.kind == PART_KIND_GPT ? p->ef02_start
@@ -991,18 +1117,66 @@ static cli_status put_bios_files(const cli_args *a, const stn_disk *td,
     return rc;
 }
 
+/* The new station partition's FAT, and that it came out as planned. */
+static cli_status make_station_fat(const stn_disk *td, stn_plan *p)
+{
+    uint8_t bs[BIOS_SECTOR_MAX];
+    bios_fat fat;
+    mks_dev dev;
+    cli_status rc;
+
+    rc = format_station(td, p);
+    if (rc != CLI_OK)
+        return rc;
+    dev.sector = td->d.sector;
+    dev.fd = open(td->d.path, O_RDWR | O_CLOEXEC);
+    if (dev.fd < 0)
+        return set_error_errno(CLI_ERR_IO, "opening %s", td->d.path);
+    rc = dev_read(&dev, p->region.start, 1, bs);
+    if (rc == CLI_OK && (bioscore_fat_bpb(bs, &fat) != BIOSCORE_OK ||
+                         fat.sector != td->d.sector ||
+                         fat.reserved < p->reserved || !fat.fat32 ||
+                         fat.fsinfo == BOOTPART_MARKER_SECTOR ||
+                         fat.backup == BOOTPART_MARKER_SECTOR))
+        rc = set_error(CLI_ERR_INVALID, "mkfs.fat made a FAT the plan does "
+                       "not fit (%u-byte sectors, reserved %u; want %u, %u)",
+                       (unsigned)fat.sector, (unsigned)fat.reserved,
+                       (unsigned)td->d.sector, (unsigned)p->reserved);
+    (void)close(dev.fd);
+    if (rc != CLI_OK)
+        return rc;
+    log_info("station partition: FAT32, %u-byte sectors, %u reserved",
+             (unsigned)fat.sector, (unsigned)fat.reserved);
+    return CLI_OK;
+}
+
 static cli_status write_bios(const cli_args *a, const stn_disk *td,
                              stn_plan *p, const uint8_t *b2, size_t l2,
                              const uint8_t *b3, size_t l3,
                              const uint8_t id[IDENT_ID_LEN])
 {
-    uint8_t bs[BIOS_SECTOR_MAX];
-    bios_fat fat;
     ident_rec rec;
     mks_dev dev;
     cli_status rc;
 
-    if (td->r.table.id.kind == PART_KIND_GPT) {
+    if (td->r.table.id.kind == PART_KIND_GPT && p->esp_bios) {
+        if (p->make_ef02) {
+            char n1[64], t1[80], c1[64];
+
+            (void)snprintf(n1, sizeof n1, "%u:%llu:%llu", p->ef02_slot,
+                           (unsigned long long)p->ef02_start,
+                           (unsigned long long)p->ef02_end);
+            (void)snprintf(t1, sizeof t1, "%u:%s", p->ef02_slot,
+                           BIOS_BOOT_TYPE);
+            (void)snprintf(c1, sizeof c1, "%u:%s", p->ef02_slot,
+                           BIOS_BOOT_NAME);
+            rc = proc_runl_quiet("sgdisk", "-a", "1", "-n", n1, "-t", t1,
+                                 "-c", c1, td->d.path, PROC_END);
+            if (rc != CLI_OK)
+                return rc;
+            log_info("GPT: the FALCON-BIOS partition");
+        }
+    } else if (td->r.table.id.kind == PART_KIND_GPT) {
         char n1[64], t1[80], c1[64], n2[64], t2[80], c2[64];
 
         (void)snprintf(n2, sizeof n2, "%u:%llu:%llu", p->slot,
@@ -1032,28 +1206,12 @@ static cli_status write_bios(const cli_args *a, const stn_disk *td,
                  p->make_ef02 ? ", and the FALCON-BIOS partition" : "");
     }
 
-    rc = format_station(td, p);
-    if (rc != CLI_OK)
-        return rc;
     dev.sector = td->d.sector;
-    dev.fd = open(td->d.path, O_RDWR | O_CLOEXEC);
-    if (dev.fd < 0)
-        return set_error_errno(CLI_ERR_IO, "opening %s", td->d.path);
-    rc = dev_read(&dev, p->region.start, 1, bs);
-    if (rc == CLI_OK && (bioscore_fat_bpb(bs, &fat) != BIOSCORE_OK ||
-                         fat.sector != td->d.sector ||
-                         fat.reserved < p->reserved || !fat.fat32 ||
-                         fat.fsinfo == BOOTPART_MARKER_SECTOR ||
-                         fat.backup == BOOTPART_MARKER_SECTOR))
-        rc = set_error(CLI_ERR_INVALID, "mkfs.fat made a FAT the plan does "
-                       "not fit (%u-byte sectors, reserved %u; want %u, %u)",
-                       (unsigned)fat.sector, (unsigned)fat.reserved,
-                       (unsigned)td->d.sector, (unsigned)p->reserved);
-    (void)close(dev.fd);
-    if (rc != CLI_OK)
-        return rc;
-    log_info("station partition: FAT32, %u-byte sectors, %u reserved",
-             (unsigned)fat.sector, (unsigned)fat.reserved);
+    if (!p->esp_bios) {
+        rc = make_station_fat(td, p);
+        if (rc != CLI_OK)
+            return rc;
+    }
 
     rc = put_bios_files(a, td, p);
     if (rc != CLI_OK)
@@ -1229,6 +1387,10 @@ static cli_status write_uefi(const stn_disk *td, const stn_plan *p,
     memset(&rec, 0, sizeof rec);
     rec.version = IDENT_VERSION;
     rec.role = IDENT_ROLE_BOOT;
+    if (p->esp_bios) {
+        rec.stage3_sector = BOOTPART_STAGE3_SECTOR;
+        rec.marker_sector = BOOTPART_MARKER_SECTOR;
+    }
     memcpy(rec.install_id, id, IDENT_ID_LEN);
     return records_write_boot(td->d.path, off, &rec);
 }
@@ -1468,6 +1630,9 @@ static cli_status install_run(const cli_args *a)
     size_t l1 = 0, l2 = 0, l3 = 0;
     uint8_t install_id[IDENT_ID_LEN];
     char idhex[33];
+    char found_shelf[MKS_PATH_MAX + 16];
+    stn_add add;
+    int add_pcr5 = 0;
     shelf_ref shelf;
     mks_pass pass;
     mok_keys keys;
@@ -1542,14 +1707,32 @@ static cli_status install_run(const cli_args *a)
         return set_error(CLI_ERR_INVALID, "%s has no partition table; the "
                          "station goes onto a machine's disk beside its "
                          "systems", td->d.path);
-    if (records_bios_boot(&td->r) >= 0 || records_boot(&td->r) >= 0) {
+    {
         int b = records_boot(&td->r);
+        int bb = records_bios_boot(&td->r);
+        int ue = stn_uefi_station(td);
 
-        records_id_hex(td->r.recs[b].rec.install_id, idhex);
-        return set_error(CLI_ERR_EXISTS, "partition %u of %s already carries "
-                         "falcon install %s; `station remove` it first (and "
-                         "delete the station partition a remove leaves)",
-                         td->r.parts[b].number, td->d.path, idhex);
+        add = stn_add_decide(b >= 0, stn_bios_station(td), ue >= 0, ask_bios,
+                             ask_uefi);
+        if (add != STN_ADD_FRESH)
+            records_id_hex(td->r.recs[bb >= 0 ? bb : b].rec.install_id, idhex);
+        if (add == STN_ADD_NAME_IT)
+            return set_error(CLI_ERR_EXISTS, "%s has falcon install %s for "
+                             "%s only; `station install %s` adds the other "
+                             "firmware to it", td->d.path, idhex,
+                             ue >= 0 ? "UEFI" : "BIOS",
+                             ue >= 0 ? "--bios" : "--uefi");
+        if (add == STN_ADD_REFUSE)
+            return set_error(CLI_ERR_EXISTS, "partition %u of %s already "
+                             "carries falcon install %s; `station remove` it "
+                             "first (and delete the station partition a "
+                             "remove leaves)", td->r.parts[b].number,
+                             td->d.path, idhex);
+        if (add != STN_ADD_FRESH)
+            memcpy(install_id,
+                   td->r.recs[bb >= 0 ? bb : b].rec.install_id, IDENT_ID_LEN);
+        if (add == STN_ADD_BIOS)
+            add_pcr5 = (stn_uefi_totp_pcrs(td, ue) & (1u << 5)) != 0u;
     }
 
     /* ---- which firmware ---- */
@@ -1575,6 +1758,12 @@ static cli_status install_run(const cli_args *a)
     p.uefi = ask_uefi || (!ask_bios && p.esp >= 0);
     p.bios = ask_bios || !ask_uefi;
     p.no_shim = cli_value(a, "shim", NULL) == NULL;
+    if (p.bios && p.esp >= 0 && size_text != NULL)
+        return set_error(CLI_ERR_USAGE, "--size is the station partition's, "
+                         "and %s has an ESP, where the BIOS station goes",
+                         td->d.path);
+    if (add == STN_ADD_UEFI && records_bios_boot(&td->r) == p.esp)
+        p.esp_bios = 1;
     if (!p.no_shim && !p.uefi)
         return set_error(CLI_ERR_USAGE, "--shim is for the UEFI station, "
                          "and %s is not getting one", td->d.path);
@@ -1597,14 +1786,15 @@ static cli_status install_run(const cli_args *a)
             log_info("BIOS:     not installed (%s)", cli_error_msg());
             cli_error_clear();
             p.bios = 0;
+            p.esp_bios = 0;
             rc = CLI_OK;
         }
         if (rc != CLI_OK)
             goto out;
     }
 
-    /* ---- UEFI: the ESP ---- */
-    if (p.uefi) {
+    /* ---- the ESP, for either half ---- */
+    if (p.uefi || (p.bios && p.esp_bios)) {
         uint8_t bs[512];
         disk_io io;
         char where[MKS_PATH_MAX];
@@ -1632,14 +1822,22 @@ static cli_status install_run(const cli_args *a)
     }
 
     /* ---- the shelf ---- */
-    if (cli_value(a, "shelf", NULL) != NULL) {
-        rc = shelf_resolve(cli_value(a, "shelf", NULL), &s, &shelf);
+    found_shelf[0] = '\0';
+    if (add != STN_ADD_FRESH && cli_value(a, "shelf", NULL) == NULL)
+        stn_installs_shelf(&s, install_id, found_shelf, sizeof found_shelf);
+    if (cli_value(a, "shelf", NULL) != NULL || found_shelf[0] != '\0') {
+        rc = shelf_resolve(found_shelf[0] != '\0'
+                               ? found_shelf
+                               : cli_value(a, "shelf", NULL), &s, &shelf);
         if (rc != CLI_OK)
             goto out;
         shelf_probe(&shelf);
         log_info("shelf:    %s%s%s, %s", shelf.disk,
                  shelf.number != 0u ? " partition " : "",
-                 shelf.number != 0u ? cli_value(a, "shelf", "") : "",
+                 shelf.number != 0u
+                     ? (found_shelf[0] != '\0' ? found_shelf
+                                               : cli_value(a, "shelf", ""))
+                     : "",
                  shelf.luks ? "LUKS2" : "plaintext");
         reach_warn("the shelf", shelf.off + shelf.len);
     } else {
@@ -1747,25 +1945,35 @@ static cli_status install_run(const cli_args *a)
     }
 
     /* ---- the plan, said ---- */
-    rc = records_new_id(install_id);
-    if (rc != CLI_OK)
-        goto out;
+    if (add == STN_ADD_FRESH) {
+        rc = records_new_id(install_id);
+        if (rc != CLI_OK)
+            goto out;
+    }
     records_id_hex(install_id, idhex);
     cli_log_blank();
-    log_info("install ID: %s", idhex);
+    log_info("install ID: %s%s", idhex,
+             add == STN_ADD_FRESH ? "" : " (the disk's own)");
     if (p.bios) {
         char size[32];
 
-        log_info("BIOS:     %s station partition, %s partition %u at LBA "
-                 "%llu..%llu (%s), FAT32 with %u reserved sectors",
-                 cli_flag(a, "legacy") ? "station-legacy," : "the",
-                 td->r.table.id.kind == PART_KIND_MBR ? "primary"
-                                                      : "GPT",
-                 p.slot, (unsigned long long)p.region.start,
-                 (unsigned long long)(p.region.start + p.region.sectors - 1u),
-                 util_format_size(p.region.sectors * td->d.sector, size,
-                                  sizeof size),
-                 (unsigned)p.reserved);
+        if (p.esp_bios)
+            log_info("BIOS:     %sthe ESP's reserved sectors (partition %u, "
+                     "%u of them), as on a stick",
+                     cli_flag(a, "legacy") ? "station-legacy, " : "",
+                     td->r.parts[p.esp].number, (unsigned)p.esp_fat.reserved);
+        else
+            log_info("BIOS:     %s station partition, %s partition %u at LBA "
+                     "%llu..%llu (%s), FAT32 with %u reserved sectors",
+                     cli_flag(a, "legacy") ? "station-legacy," : "the",
+                     td->r.table.id.kind == PART_KIND_MBR ? "primary"
+                                                          : "GPT",
+                     p.slot, (unsigned long long)p.region.start,
+                     (unsigned long long)(p.region.start + p.region.sectors -
+                                          1u),
+                     util_format_size(p.region.sectors * td->d.sector, size,
+                                      sizeof size),
+                     (unsigned)p.reserved);
         if (p.make_ef02)
             log_info("          %s partition %u at LBA %llu..%llu",
                      BIOS_BOOT_NAME, p.ef02_slot,
@@ -1837,9 +2045,13 @@ static cli_status install_run(const cli_args *a)
 
     /* ---- the backup, before anything ---- */
     if (backup == NULL) {
+        /* An add has a backup of its own: it undoes that half alone, and
+         * the first install's is not to be replaced. */
         (void)snprintf(derived, sizeof derived,
-                       "falcon-station-backup-%s.bin",
-                       util_basename(td->d.path));
+                       "falcon-station-backup-%s%s.bin",
+                       util_basename(td->d.path),
+                       add == STN_ADD_BIOS ? "-bios"
+                       : add == STN_ADD_UEFI ? "-uefi" : "");
         backup = derived;
     }
     memset(&bk, 0, sizeof bk);
@@ -1853,8 +2065,9 @@ static cli_status install_run(const cli_args *a)
         uint64_t gap_lo = 1u;
         uint64_t disk_sectors = td->d.size / td->d.sector;
 
-        bk.flags |= STN_FLAG_BIOS | STN_FLAG_MADE_PART;
-        bk.station_part = p.slot;
+        bk.flags |= STN_FLAG_BIOS |
+                    (p.esp_bios ? STN_FLAG_BIOS_ESP : STN_FLAG_MADE_PART);
+        bk.station_part = p.esp_bios ? 0u : p.slot;
         if (td->r.table.id.kind == PART_KIND_GPT) {
             gap_lo = td->r.table.first_usable;
             rc = backup_add(&bk, td->d.path, STN_RUN_GPT, 1, gap_lo - 1u);
@@ -1873,15 +2086,25 @@ static cli_status install_run(const cli_args *a)
                                 ? p.bplan.stage2_lba + p.bplan.stage2_sectors
                                       - gap_lo
                                 : first - gap_lo);
-        if (rc == CLI_OK) {
+        if (rc == CLI_OK && p.esp_bios) {
+            /* Sector 8 on: the record's sectors are the ESP's boot-sector
+             * runs below, and FSInfo moves with every file. */
+            uint32_t top = p.esp_fat.reserved < p.reserved
+                               ? p.esp_fat.reserved : p.reserved;
+
+            rc = backup_add(&bk, td->d.path, STN_RUN_REGION,
+                            p.region.start + BOOTPART_MARKER_SECTOR,
+                            top - BOOTPART_MARKER_SECTOR);
+        } else if (rc == CLI_OK) {
             uint64_t n = p.reserved + STN_REGION_BACKUP_BYTES / td->d.sector;
 
             rc = backup_add(&bk, td->d.path, STN_RUN_REGION, p.region.start,
                             p.region.sectors < n ? p.region.sectors : n);
         }
     }
-    if (rc == CLI_OK && p.uefi) {
-        bk.flags |= STN_FLAG_UEFI;
+    if (rc == CLI_OK && (p.uefi || (p.bios && p.esp_bios))) {
+        if (p.uefi)
+            bk.flags |= STN_FLAG_UEFI;
         bk.esp_part = td->r.parts[p.esp].number;
         rc = backup_add(&bk, td->d.path, STN_RUN_ESP_BOOT,
                         td->r.parts[p.esp].start_lba, 1);
@@ -1906,7 +2129,9 @@ static cli_status install_run(const cli_args *a)
     }
 
     /* ---- writes: the shelf, BIOS, UEFI, other disks, LBA 0 last ---- */
-    if (shelf.set) {
+    if (shelf.set && !(shelf.has_rec &&
+                       memcmp(shelf.rec.install_id, install_id,
+                              IDENT_ID_LEN) == 0)) {
         rc = shelf_stamp(&shelf, install_id);
         if (rc != CLI_OK)
             goto out;
@@ -1942,8 +2167,12 @@ static cli_status install_run(const cli_args *a)
 
     cli_log_blank();
     log_info("%s boots the station (install ID %s).", td->d.path, idhex);
-    log_info("`falcon-boot-mkstick station remove --backup %s` undoes it.",
-             backup);
+    log_info("`falcon-boot-mkstick station remove --backup %s` undoes %s.",
+             backup, add == STN_ADD_BIOS ? "the BIOS half"
+                     : add == STN_ADD_UEFI ? "the UEFI half" : "it");
+    if (add_pcr5 && p.make_ef02)
+        log_warn("[totp] seals PCR 5, which measures the GPT this changed: "
+                 "boot the UEFI station and run `station totp reseal`.");
     if (p.uefi && p.no_shim)
         log_info("Secure Boot on: the firmware's db must hold "
                  "\\EFI\\falcon\\%s; enroll it from firmware setup.",
@@ -1987,7 +2216,10 @@ const cli_cmd stn_cmd_install = {
     install_opts,
     sizeof install_opts / sizeof install_opts[0],
     1, 1,
-    "BIOS: a station partition in free space (MBR: a primary, type 0x1C,\n"
+    "BIOS: on a disk with an ESP, the ESP's reserved sectors (stage 3 and\n"
+    "the marker) and STATION.INI at its root, as on a stick; an ESP without\n"
+    "the room is refused with the mkfs.fat -R count that fits. Otherwise a\n"
+    "station partition in free space (MBR: a primary, type 0x1C,\n"
     "hidden FAT32; GPT: the falcon boot type, and a FALCON-BIOS partition\n"
     "at LBA 34 for stage 2 when there is none), with the boot record, stage\n"
     "3 and the marker in its reserved sectors and STATION.INI (MEMTEST.BIN,\n"
@@ -2014,6 +2246,9 @@ const cli_cmd stn_cmd_install = {
     "station's install ID.\n"
     "\n"
     "Everything it changes is saved to --backup first, LBA 0 is written\n"
-    "last, and `station remove --backup` undoes it.\n",
+    "last, and `station remove --backup` undoes it.\n"
+    "\n"
+    "On a station with one half, --bios or --uefi adds the other: same\n"
+    "install ID and shelf, its own backup, the first half untouched.\n",
     install_run
 };
