@@ -1069,14 +1069,17 @@ second time for i686 for 32-bit media. The served `boot.wim` has
 alongside it as `winpeshl_orig.exe` (Section 6.4). At runtime winjump
 attaches the ISO read-only from the library partition and then executes the
 original `winpeshl.exe`, so Windows Setup proceeds as it would have and
-finds `install.wim` on a real, mounted CD-ROM. The image patched is the one
+finds `install.wim` on a real, mounted CD-ROM. With no stick after 30 s, it
+starts the shell anyway and keeps looking on a thread, trying again each time
+the drive letters or the disks change: Windows 7's WinPE has been seen to get a
+USB stick later than that. The image patched is the one
 the WIM header names as bootable (`falcon-core/src/wim/wim.c`), index 2
 (Setup) on Win11 25H2. winjump suppresses the critical-error dialog an empty
 floppy drive raises when it probes drives (`SEM_FAILCRITICALERRORS`).
 
 **falcon-vdisk.** Where `AttachVirtualDisk` cannot serve - Vista and 7, whose
 WinPE has no ISO support and cannot read an exFAT partition the ISO lives
-on, and 2000/XP, which have no WinPE - winjump loads `falcon-vdisk`
+on - winjump loads `falcon-vdisk`
 (`falcon-vdisk/`; a native NT CD-ROM driver, built for both widths from one
 source as the hook and winjump are) with `CreateService`/`StartService` and
 hands it the ISO's physical-disk extents: the same extent map the Linux
@@ -1094,14 +1097,14 @@ mapped MDL.
 
 Kernel-mode code signing decides where the driver loads. Windows
 kernel-mode driver trust chains to Microsoft's own roots, not to the MOK or
-the UEFI `db`, but the driver runs only in the installer's WinPE:
+the UEFI `db`, but the driver runs only in the installer's WinPE or under a
+XP Setup, none of which enforces it:
 
 - 32-bit WinPE, which every 32-bit Windows installer boots, enforces no
   kernel-mode code signing: the unsigned `falcon-vdisk` loads.
-- The driver runs in 32-bit WinPE only. On BIOS the resident CD (below)
-  makes it unnecessary for 64-bit media; on UEFI the corpus's 64-bit media
-  older than 8 fail before WinPE, with no EFI System Partition found on the
-  medium (docs/coverage.md).
+- 64-bit WinPE loaded it too on the one case seen, Windows 7 RTM x64 on BIOS
+  from a USB stick. On UEFI the corpus's 64-bit media older than 8 fail before
+  WinPE, with no EFI System Partition found on the medium (docs/coverage.md).
 
 On BIOS the ISO is a resident INT 13h CD that never vanishes, so WinPE
 reaches winpeshl and winjump runs; the BIOS winjump config carries the
@@ -1111,6 +1114,54 @@ runs, so falcon-vdisk loads too late. An EFI RAM disk is a medium Windows
 keeps across ExitBootServices, but OVMF's RamDiskDxe publishes a Block I/O
 its CDFS, PartitionDxe and FatDxe do not bind to, so Windows 7/Vista under
 EFI is unvalidated in OVMF.
+
+**Windows XP (BIOS only).** It has no WinPE, so nothing can load the driver
+for it: Setup itself is made to, and the driver finds the ISO on
+its own (diagram: 11.3.9). The loader edits `txtsetup.sif` in memory so the
+driver is in text-mode Setup's `[SCSI.Load]` and files lists, and adds a small
+INF to `[HiveInfs.Fresh]` that makes it a boot-start service of the installed
+system, since the graphical phase needs the CD too. It bakes the ISO's extent
+map into the served copy of the driver, then recomputes the PE checksum Setup
+checks when it copies a file. The edited sif, the driver and the INF are
+appended past the ISO's end, in memory the handler's E820 reports reserved, and
+the driver maps that memory to serve the same edits the handler does
+(`xp_bake_edits`), because after the kernel starts nothing calls INT 13h.
+
+BIOS disk 0x80 is the disk Setup installs to, and at boot it is the stick. When
+the machine has a second disk, the loader swaps the two numbers with the
+resident swap handler (`mbr/swap.c`) just before the handover.
+
+What the driver does for Setup that a real CD's stack does: it raises
+`CdRomCount`, the count text-mode Setup reads to decide there is a CD-ROM drive;
+links `\Device\CdRom0` and the ARC names of the boot CD to itself, which clears
+the kernel's 0x7B; and answers PnP queries with `STATUS_NOT_SUPPORTED`, because
+`FsRtlNotifyVolumeEvent` reads through the device relations a success would
+promise. It suggests `Z:` to the mount manager: arriving before
+any disk it would otherwise take `C:`, and Setup records that in the installed
+system's `MountedDevices`, which moves Windows to a later letter. For the same
+reason it deletes the letters of the stick's partitions for as long as text mode
+runs, since the kernel assigns those late and a new disk's partition does not
+exist yet.
+
+A USB stick needs the USB stack running before Setup can read the CD. The loader
+moves the USB controller, hub and storage rows of `txtsetup.sif` from
+`[InputDevicesSupport]` to `[BootBusExtenders]` (`txtsetup_usb_boot_start`). Setup
+otherwise records those devices as still to be installed (`ConfigFlags` 0x400),
+which it does from the CD in its graphical phase, so a stick holding the CD would
+never start. In the graphical phase the driver waits up to 12 hours for the stick,
+with nothing at boot depending on it.
+
+Windows 2000 install media is refused (`txtsetup_is_win2000`, the `MinorVersion =
+0` of its `[SetupData]`). From a USB stick its `usbstor` needs `DriverFlags` from a
+driver key only its INF creates, and it binds and fails before falcon-vdisk loads.
+
+Whichever boot it is, the driver decides for itself. A `setupdd` service exists
+only in text-mode Setup's hive, so its presence means the kernel booted from
+this CD and memory holds the appended run. `SystemSetupInProgress` set means
+the graphical phase, which serves the ISO from the stick with the unedited
+sectors. Neither means the install is done: the driver sets its service's
+`Start` to disabled and fails `DriverEntry`, so the installed system boots with
+the stick gone. `_FALCON.SYS` stays in `system32\drivers`, disabled.
 
 **The overlay layer.** The virtual-media publisher of Section 6 stage 2
 carries two layers (`falcon-efi/src/iso/overlay.h`):
@@ -1892,7 +1943,7 @@ architecture's machines.
 
 Anything the medium does not prove is not marked: no boot configuration, a
 kernel that cannot be read, bytes that are neither a PE nor a bzImage, a
-`.img`. By the corpus's Windows media this marks 2000, XP (both), Vista RTM
+`.img`. By the corpus's Windows media this marks XP (both), Vista RTM
 x86 and 7 x86; and DevLink recovery (12.5), an isolinux medium around a
 32-bit kernel.
 
@@ -2203,7 +2254,9 @@ and an 8x19 drawing). falcon-core puts them at the private use code points
 U+E000 to U+E003, and a display loads them. falcon-bios writes them over
 code page 437's 0x01 to 0x04 with INT 10h AX=1100h, and only when AX=1130h
 gives the ROM font, whose glyphs go back the same way at the hand-off and
-which a mode set restores. The UEFI loader adds them to the firmware's
+which a mode set restores. It keeps them only when they read back from the
+font's plane, since SeaVGABIOS built for coreboot's graphics init answers the
+call without loading anything. The UEFI loader adds them to the firmware's
 fonts as an HII simple font package, kept only when the console's
 TestString accepts them (edk2's graphics console draws through the HII
 database; a serial terminal or a firmware's own console driver does not),
@@ -3242,6 +3295,9 @@ sequenceDiagram
     W->>W: OpenVirtualDisk, AttachVirtualDisk (read-only, permanent)
     W->>W: falcon\windows.cfg: LabConfig bypass, unattend
     W->>ST: winpeshl_orig.exe
+    opt no stick after the 30 s
+        W->>W: media_watch: the same again each time the storage changes
+    end
     Note over ST: install.wim found on the attached CD
 ```
 
@@ -3726,9 +3782,45 @@ sequenceDiagram
     R->>R: tail blocks copied down with INT 15h AH=87h
     M->>M: RAM disk, NT kernel, the handler is no longer called
     M->>W: winpeshl.exe = winjump
-    W->>W: find_iso, AttachVirtualDisk, windows.cfg
+    W->>W: find_iso, AttachVirtualDisk, windows.cfg; then the driver
     W->>ST: winpeshl_orig.exe
+    opt no stick after the 30 s
+        W->>W: media_watch: the same again each time the storage changes
+    end
     Note over ST: install.wim found on the attached CD
+```
+
+`WXP` takes media with no `boot.wim` and an `i386/txtsetup.sif`: Windows XP
+(Section 6.3); it refuses Windows 2000's. Nothing from the loader survives the first reboot except
+what Setup copied to the disk.
+
+```mermaid
+sequenceDiagram
+    participant L as stage 3
+    participant R as resident handlers
+    participant K as setupldr, NT kernel
+    participant D as falcon-vdisk
+    participant S as Setup
+    L->>L: ISO's filesystem, txtsetup.sif into reserved memory
+    L->>L: txtsetup_inject, txtsetup_add_hive, the USB rows moved to boot bus extenders
+    L->>L: bake the extent map, the edits, the PE checksum
+    L->>L: the sif, the driver, the INF appended past the ISO's end
+    L->>R: CHN (11.3.8), xp_system_disk swaps 0x80 and 0x81
+    R->>K: setupldr, kernel and boot drivers over INT 13h
+    K->>D: DriverEntry: setupdd exists, so text mode
+    D->>D: map the appended run, CdRomCount, CdRom0 and ARC links
+    D->>D: find the stick by the extent map, on its own thread
+    D->>K: mount manager told, Z: suggested, the stick's letters deleted
+    K->>S: text-mode Setup, reads through the CD
+    S->>S: partitions, formats, copies files and the driver to the disk
+    S->>K: reboot, the stick no longer first
+    K->>D: DriverEntry: SystemSetupInProgress, so the graphical phase
+    D->>D: CD from the stick when it appears, no appended run
+    K->>S: graphical Setup, the ISO's files through the CD
+    S->>K: reboot, Setup finished
+    K->>D: DriverEntry: neither
+    D->>D: Start = 4, STATUS_UNSUCCESSFUL
+    Note over K: the installed system stands alone
 ```
 
 #### 11.3.10 BSD: a BSD medium as its own memory disk

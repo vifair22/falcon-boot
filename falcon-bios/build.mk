@@ -127,7 +127,9 @@ BIOS_MOD_mbr     := $(BIOS)/mbr/mbr.c
 # The station's chains, a partition's boot sector and another disk's MBR,
 # with the drive swap (DESIGN Section 12.4); vbrcore.c is the tested half,
 # and core's vbr.c what a boot sector is.
-BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR)
+BIOS_MOD_swap    := $(BIOS)/mbr/swap.c
+BIOS_MOD_chain   := $(BIOS)/mbr/chain.c $(BIOS)/mbr/vbrcore.c $(CORE_VBR) \
+	$(BIOS_MOD_swap)
 BIOS_MOD_jumpini := $(BIOS)/jump/jumpini.c
 BIOS_MOD_jmod    := $(BIOS)/jump/jmod.c $(BIOS)/jump/jmodload.c $(BIOS)/jump/jres.c
 # The CD, USB and CF routes through those drivers (DESIGN Sections 13.6 and
@@ -553,6 +555,18 @@ $(BIOS_NATIDE_ROM): $(BIOS_OBJ)/falcon-bios/tools/natide.o $(BIOS)/start/bios.ld
 		assert len(b) == 512, "%s is %d bytes, not 512" % (p, len(b)); \
 		b[-1] = (-sum(b[:-1])) & 0xFF; open(p, "wb").write(b)' $@
 
+# The station rig's option ROM for a VGA BIOS that ignores a font load
+# (falcon-bios/tools/nofont.S). 512 bytes, the last one making the sum zero.
+BIOS_NOFONT_ROM := build/nofont.rom
+
+$(BIOS_NOFONT_ROM): $(BIOS_OBJ)/falcon-bios/tools/nofont.o $(BIOS)/start/bios.ld
+	@mkdir -p $(@D)
+	$(CC_HOST) $(BIOS_LDFLAGS) -Wl,-Ttext,0 -Wl,-e,_start -o $@.elf $<
+	objcopy -O binary -j .text $@.elf $@
+	@python3 -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); \
+		assert len(b) == 512, "%s is %d bytes, not 512" % (p, len(b)); \
+		b[-1] = (-sum(b[:-1])) & 0xFF; open(p, "wb").write(b)' $@
+
 # The jump rig's no-E820 boot sector (falcon-bios/tools/noe820.S): hooks
 # INT 15h to fail E820 (and E801 too, when the rig patches its mode byte)
 # and boots the floppy under it, so stage 3 builds its map from the older
@@ -584,7 +598,7 @@ $(BIOS_NOBAR): $(BIOS_OBJ)/falcon-bios/tools/nobar.o $(BIOS)/start/bios.ld
 
 # The BIOS station rig (DESIGN Section 12.11): the partition chain, the
 # drive swap, STATION.INI and next boot under SeaBIOS, judged from serial.
-test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(MKSTICK)
+test-station-bios: station $(BIOS_RIGBOOT) $(BIOS_TICKSTOP) $(BIOS_NOFONT_ROM) $(MKSTICK)
 	falcon-bios/tools/run-station-rig.sh
 
 # The BIOS station in front of real systems (DESIGN Section 12.11): the

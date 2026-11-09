@@ -1,7 +1,7 @@
 /* falcon-vdisk: the WinPE virtual-CD kernel driver (DESIGN Section 6.3).
  *
  * WHY THIS EXISTS. Windows install media older than 8 boot a WinPE (2 or 3)
- * whose AttachVirtualDisk cannot attach an ISO, and 2000/XP boot a text-mode
+ * whose AttachVirtualDisk cannot attach an ISO, and XP boots a text-mode
  * setup with no WinPE at all. falcon-winjump's userland ISO attach (the
  * Windows 8+ route) has nothing to call there. So the media the loader
  * serves has to be presented to that Windows as a real optical drive by a
@@ -34,7 +34,7 @@
 #include <media/extmap.h>
 #include <winjumpcore.h>
 
-/* Piece 3 (DESIGN Section 6.3): the boot-start backing, for Windows 2000/XP
+/* Piece 3 (DESIGN Section 6.3): the boot-start backing, for Windows XP
  * text-mode setup, which has no WinPE and so no winjump to hand the driver its
  * disk and extents through SET_BACKING. The loader (win_xp_boot) instead patches
  * an extent map into this driver's served copy: it scans the .sys for the magic
@@ -49,11 +49,23 @@
 #define VDISK_BAKE_MAGIC { 'F','A','L','C','O','N','v','d','B','A','K','E', \
                            '0','0','0','1' }
 #define VDISK_BAKE_CAP 4096u
+#define VDISK_BAKE_EDITS 8u
 static struct {
     unsigned char magic[16];
     unsigned long map_len;
     unsigned char map[VDISK_BAKE_CAP];
-} g_bake = { VDISK_BAKE_MAGIC, 0, { 0 } };
+    /* The loader's edits to the medium (falcon-bios win.c, xp_bake_edits): the
+     * BIOS served them before the kernel, and this has to serve them after. */
+    unsigned long total_blocks;
+    unsigned long app_phys;
+    unsigned long app_start;
+    unsigned long app_blocks;
+    unsigned long n_edits;
+    struct {
+        unsigned long lba;
+        unsigned long app_block;
+    } edit[VDISK_BAKE_EDITS];
+} g_bake = { VDISK_BAKE_MAGIC, 0, { 0 }, 0, 0, 0, 0, 0, { { 0, 0 } } };
 
 #ifdef VDISK_SERIAL_TRACE
 static void serial_trace(const char *s);
@@ -150,7 +162,7 @@ typedef struct {
 
 static UNICODE_STRING g_ctl_name, g_ctl_link, g_cd_name;
 /* Piece 3: the standard CD-ROM device name the boot-device ARC path resolves
- * to, aliased to this device so 2000/XP text-mode setup's kernel finds its boot
+ * to, aliased to this device so XP text-mode setup's kernel finds its boot
  * CD (else 0x7B). Created only on the baked path; g_cdrom0 records whether it
  * was, so unload removes it. */
 static UNICODE_STRING g_cdrom0_name;
@@ -161,13 +173,6 @@ static BOOLEAN g_cdrom0;
  * g_arc records whether it was, so unload removes it. */
 static UNICODE_STRING g_arc_name;
 static BOOLEAN g_arc;
-/* The boot CD's ARC name by the fixed served drive, created unconditionally as
- * well: Windows 2000 keeps no SystemBootDevice for bind_boot_device to read,
- * and names its boot CD by the BIOS drive falcon-bios serves on, 0xE0 = 224
- * (falcon-bios/src/iso/vcd.h VCD_DRIVE) - the same name XP records, so cdrom(224)
- * covers 2000 too. */
-static UNICODE_STRING g_arc0_name;
-static BOOLEAN g_arc0;
 /* Signalled once the backing is resolved (or given up on), so a read waits for
  * the stick to be found rather than serving zeros: this is what makes the
  * shipped build reliable without the trace build's serial delays. The wait is
@@ -305,6 +310,36 @@ static NTSTATUS NTAPI vdisk_create_close(PDEVICE_OBJECT dev, PIRP irp)
 }
 
 /* Does the work of one read IRP at PASSIVE_LEVEL and completes it. */
+static PUCHAR g_app;     /* the loader's appended run, mapped */
+
+/* Lays the loader's edits over a read. */
+static void edits_apply(ULONGLONG off, ULONG len, PUCHAR dst)
+{
+    const ULONGLONG bs = 2048;
+    ULONGLONG start, end, a, b;
+    ULONG i;
+
+    if (g_app == NULL)
+        return;
+    start = (ULONGLONG)g_bake.app_start * bs;
+    end = start + (ULONGLONG)g_bake.app_blocks * bs;
+    a = off > start ? off : start;
+    b = off + len < end ? off + len : end;
+    if (a < b)
+        RtlCopyMemory(dst + (a - off), g_app + (a - start), (SIZE_T)(b - a));
+    for (i = 0; i < g_bake.n_edits && i < VDISK_BAKE_EDITS; i++) {
+        start = (ULONGLONG)g_bake.edit[i].lba * bs;
+        end = start + bs;
+        a = off > start ? off : start;
+        b = off + len < end ? off + len : end;
+        if (a < b)
+            RtlCopyMemory(dst + (a - off),
+                          g_app + (ULONGLONG)g_bake.edit[i].app_block * bs +
+                              (a - start),
+                          (SIZE_T)(b - a));
+    }
+}
+
 static void serve_read(PIRP irp)
 {
     PIO_STACK_LOCATION io = IoGetCurrentIrpStackLocation(irp);
@@ -328,6 +363,7 @@ static void serve_read(PIRP irp)
      * PASSIVE on this thread, so it does not stall the boot-start sequence. */
     KeWaitForSingleObject(&g_backing_ready, Executive, KernelMode, FALSE, NULL);
     backing_read(off, len, dst);
+    edits_apply(off, len, dst);
     complete(irp, STATUS_SUCCESS, len);
 }
 
@@ -363,40 +399,26 @@ static NTSTATUS NTAPI vdisk_read(PDEVICE_OBJECT dev, PIRP irp)
     return STATUS_PENDING;
 }
 
-/* Tell the mount manager the CD-ROM has arrived: it queries the device
- * (the MOUNTDEV IOCTLs above), assigns a drive letter, and a first open then
- * mounts CDFS on it. Done from an IOCTL rather than DriverEntry so the backing
- * already holds the ISO when the mount reads it. */
-static NTSTATUS notify_mountmgr(void)
+/* One request to the mount manager, waited for. */
+static NTSTATUS mountmgr_call(ULONG code, PVOID in, ULONG in_len, PVOID out,
+                              ULONG out_len)
 {
     UNICODE_STRING mm;
     PFILE_OBJECT fobj = NULL;
     PDEVICE_OBJECT mdev = NULL;
-    PMOUNTMGR_TARGET_NAME tn;
     KEVENT ev;
     IO_STATUS_BLOCK iosb;
     PIRP irp;
     NTSTATUS st;
-    ULONG len = FIELD_OFFSET(MOUNTMGR_TARGET_NAME, DeviceName) +
-                g_cd_name.Length;
 
     RtlInitUnicodeString(&mm, MOUNTMGR_DEVICE_NAME);
     st = IoGetDeviceObjectPointer(&mm, FILE_READ_ATTRIBUTES, &fobj, &mdev);
     if (!NT_SUCCESS(st))
         return st;
-    tn = ExAllocatePoolWithTag(NonPagedPool, len, 'DVaF');
-    if (tn == NULL) {
-        ObDereferenceObject(fobj);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-    tn->DeviceNameLength = g_cd_name.Length;
-    RtlCopyMemory(tn->DeviceName, g_cd_name.Buffer, g_cd_name.Length);
     KeInitializeEvent(&ev, NotificationEvent, FALSE);
-    irp = IoBuildDeviceIoControlRequest(
-        IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION, mdev, tn, len, NULL, 0,
-        FALSE, &ev, &iosb);
+    irp = IoBuildDeviceIoControlRequest(code, mdev, in, in_len, out, out_len,
+                                        FALSE, &ev, &iosb);
     if (irp == NULL) {
-        ExFreePoolWithTag(tn, 'DVaF');
         ObDereferenceObject(fobj);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -405,8 +427,29 @@ static NTSTATUS notify_mountmgr(void)
         KeWaitForSingleObject(&ev, Executive, KernelMode, FALSE, NULL);
         st = iosb.Status;
     }
-    ExFreePoolWithTag(tn, 'DVaF');
     ObDereferenceObject(fobj);
+    return st;
+}
+
+/* Tell the mount manager the CD-ROM has arrived: it queries the device
+ * (the MOUNTDEV IOCTLs above), assigns a drive letter, and a first open then
+ * mounts CDFS on it. Done from an IOCTL rather than DriverEntry so the backing
+ * already holds the ISO when the mount reads it. */
+static NTSTATUS notify_mountmgr(void)
+{
+    PMOUNTMGR_TARGET_NAME tn;
+    NTSTATUS st;
+    ULONG len = FIELD_OFFSET(MOUNTMGR_TARGET_NAME, DeviceName) +
+                g_cd_name.Length;
+
+    tn = ExAllocatePoolWithTag(NonPagedPool, len, 'DVaF');
+    if (tn == NULL)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    tn->DeviceNameLength = g_cd_name.Length;
+    RtlCopyMemory(tn->DeviceName, g_cd_name.Buffer, g_cd_name.Length);
+    st = mountmgr_call(IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION, tn, len,
+                       NULL, 0);
+    ExFreePoolWithTag(tn, 'DVaF');
     return st;
 }
 
@@ -478,9 +521,97 @@ static int disk_sector_read(void *ctx, uint64_t off, uint32_t len, void *buf)
     return 0;
 }
 
+/* A symbolic link's target, into buf. */
+static BOOLEAN read_link(PWSTR path, PWCHAR buf, USHORT cap, PUNICODE_STRING out)
+{
+    UNICODE_STRING us;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    NTSTATUS st;
+
+    RtlInitUnicodeString(&us, path);
+    InitializeObjectAttributes(&oa, &us, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenSymbolicLinkObject(&h, GENERIC_READ, &oa)))
+        return FALSE;
+    out->Buffer = buf;
+    out->Length = 0;
+    out->MaximumLength = cap;
+    st = ZwQuerySymbolicLinkObject(h, out, NULL);
+    ZwClose(h);
+    return NT_SUCCESS(st);
+}
+
+/* Removes one \DosDevices\X: from the mount manager, which remembers it. */
+static void delete_letter(PCWSTR name, USHORT name_bytes)
+{
+    struct {
+        MOUNTMGR_MOUNT_POINT mp;
+        WCHAR name[16];
+    } *in;
+    PUCHAR out;
+
+    in = ExAllocatePoolWithTag(NonPagedPool, sizeof *in, 'DVaF');
+    out = ExAllocatePoolWithTag(NonPagedPool, 1024, 'DVaF');
+    if (in != NULL && out != NULL) {
+        RtlZeroMemory(in, sizeof *in);
+        in->mp.SymbolicLinkNameOffset = FIELD_OFFSET(__typeof__(*in), name);
+        in->mp.SymbolicLinkNameLength = name_bytes;
+        RtlCopyMemory(in->name, name, name_bytes);
+        (void)mountmgr_call(IOCTL_MOUNTMGR_DELETE_POINTS, in, sizeof *in, out,
+                            1024);
+    }
+    if (in != NULL)
+        ExFreePoolWithTag(in, 'DVaF');
+    if (out != NULL)
+        ExFreePoolWithTag(out, 'DVaF');
+}
+
+/* A stick's partition arrives before a new disk's has been created, so it takes
+ * C:, setup gives Windows the next letter, and the installed system keeps both.
+ * The kernel assigns disk letters after the boot drivers have started, and setup
+ * rescans its partitions, so this watches for as long as text mode runs. */
+static void release_stick_letters(unsigned disk)
+{
+    static const WCHAR pre[] = L"\\Device\\Harddisk";
+    static const WCHAR mid[] = L"\\Partition";
+    for (;;) {
+        unsigned part;
+        LARGE_INTEGER d;
+
+        for (part = 1; part <= 8; part++) {
+            WCHAR path[44], vol_buf[64], let_buf[64];
+            WCHAR letter[] = L"\\DosDevices\\C:";
+            UNICODE_STRING vol, tgt;
+            WCHAR c;
+            int i = 0, j;
+
+            for (j = 0; pre[j] != 0; j++)
+                path[i++] = pre[j];
+            i += put_udec(path + i, disk);
+            for (j = 0; mid[j] != 0; j++)
+                path[i++] = mid[j];
+            i += put_udec(path + i, part);
+            path[i] = 0;
+            if (!read_link(path, vol_buf, (USHORT)sizeof vol_buf, &vol))
+                continue;
+            for (c = L'C'; c <= L'Y'; c++) {
+                letter[12] = c;
+                if (read_link(letter, let_buf, (USHORT)sizeof let_buf, &tgt) &&
+                    RtlEqualUnicodeString(&vol, &tgt, TRUE))
+                    delete_letter(letter, (USHORT)(sizeof letter - sizeof(WCHAR)));
+            }
+        }
+        d.QuadPart = -10000000;                         /* 1 s, relative */
+        KeDelayExecutionThread(KernelMode, FALSE, &d);
+    }
+}
+
 /* The match's bounce buffer and record scratch: kilobytes, and this runs on
  * a system thread's kernel stack. */
 static wj_scratch g_match;
+
+static BOOLEAN booted_from_cd(void);
 
 /* Piece 3 (DESIGN Section 6.3): resolve the baked extent map to a live
  * backing, on its own thread so notify_mountmgr's wait (and the CDFS mount and
@@ -493,17 +624,23 @@ static wj_scratch g_match;
 static void NTAPI baked_resolve(PVOID ctx)
 {
     extmap_hdr hdr;
-    int tries, n;
+    int tries, limit, n, stick = -1;
+    BOOLEAN text_mode;
     uint32_t got = 0;
     ULONG bytes;
 
     (void)ctx;
+    /* Text mode's kernel is about to need the CD. In the graphical phase nothing
+     * waits on it at boot, and a USB stick appears only once setup has installed
+     * the USB stack, well past text mode's patience: 12 hours of it. */
+    text_mode = booted_from_cd();
+    limit = text_mode ? 1200 : 43200;
     if (g_bake.map_len == 0 || g_bake.map_len > VDISK_BAKE_CAP)
         goto done;
     if (extmap_decode(g_bake.map, g_bake.map_len, &hdr) != EXTMAP_OK)
         goto done;
 
-    for (tries = 0; tries < 1200 && g_disk_handle == NULL; tries++) {
+    for (tries = 0; tries < limit && g_disk_handle == NULL; tries++) {
         for (n = 0; n < 32; n++) {
             HANDLE h;
 
@@ -512,6 +649,7 @@ static void NTAPI baked_resolve(PVOID ctx)
             if (wj_disk_holds(&hdr, disk_sector_read, &h, &g_match) ==
                 WJ_OK) {
                 g_disk_handle = h;                      /* keep it open */
+                stick = n;
                 break;
             }
             ZwClose(h);
@@ -523,7 +661,7 @@ static void NTAPI baked_resolve(PVOID ctx)
              * disk.sys enumerates it, before the kernel needs the boot CD or
              * setup scans for a CD-ROM - the window is narrow and a slow retry
              * loses the race. 1200 tries is still ~30 s of patience. */
-            d.QuadPart = -250000;                       /* 25 ms, relative */
+            d.QuadPart = text_mode ? -250000 : -10000000; /* 25 ms, 1 s */
             KeDelayExecutionThread(KernelMode, FALSE, &d);
         }
     }
@@ -557,6 +695,8 @@ done:
     /* Release any reads that were waiting for the backing - whether it was set
      * or given up on (they then serve zeros, which is the honest failure). */
     KeSetEvent(&g_backing_ready, IO_NO_INCREMENT, FALSE);
+    if (stick >= 0 && text_mode)
+        release_stick_letters((unsigned)stick);
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
@@ -786,10 +926,39 @@ static NTSTATUS cd_ioctl(PIRP irp, PIO_STACK_LOCATION io)
         return complete(irp, STATUS_SUCCESS,
                         FIELD_OFFSET(MOUNTDEV_UNIQUE_ID, UniqueId) + need);
     }
+    case IOCTL_MOUNTDEV_QUERY_SUGGESTED_LINK_NAME: {
+        /* Arriving before the disks, this CD would take C: and setup records
+         * that in the installed system, putting Windows on a later letter. */
+        PMOUNTDEV_SUGGESTED_LINK_NAME link = buf;
+        static const WCHAR letter[] = L"\\DosDevices\\Z:";
+        USHORT need = sizeof letter - sizeof(WCHAR);
+
+        if (g_bake.map_len == 0)
+            return complete(irp, STATUS_NOT_FOUND, 0);
+        if (out < sizeof(MOUNTDEV_SUGGESTED_LINK_NAME))
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+        link->UseOnlyIfThereAreNoOtherLinks = FALSE;
+        link->NameLength = need;
+        if (out < FIELD_OFFSET(MOUNTDEV_SUGGESTED_LINK_NAME, Name) + need)
+            return complete(irp, STATUS_BUFFER_OVERFLOW,
+                            sizeof(MOUNTDEV_SUGGESTED_LINK_NAME));
+        RtlCopyMemory(link->Name, letter, need);
+        return complete(irp, STATUS_SUCCESS,
+                        FIELD_OFFSET(MOUNTDEV_SUGGESTED_LINK_NAME, Name) + need);
+    }
     default:
         g_last_unhandled = code;
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
     }
+}
+
+/* There is no PnP stack here to answer for. Success with no data would be read
+ * as an answer: FsRtlNotifyVolumeEvent, which CDFS calls when it
+ * mounts, reads through the empty device relations a success leaves. */
+static NTSTATUS NTAPI vdisk_pnp(PDEVICE_OBJECT dev, PIRP irp)
+{
+    (void)dev;
+    return complete(irp, STATUS_NOT_SUPPORTED, 0);
 }
 
 static NTSTATUS NTAPI vdisk_ioctl(PDEVICE_OBJECT dev, PIRP irp)
@@ -814,8 +983,6 @@ static void NTAPI vdisk_unload(PDRIVER_OBJECT drv)
         IoDeleteSymbolicLink(&g_cdrom0_name);
     if (g_arc)
         IoDeleteSymbolicLink(&g_arc_name);
-    if (g_arc0)
-        IoDeleteSymbolicLink(&g_arc0_name);
     if (g_cd_dev != NULL)
         IoDeleteDevice(g_cd_dev);
     if (g_ctl_dev != NULL)
@@ -874,7 +1041,7 @@ NTSTATUS NTAPI ZwQueryDirectoryObject(HANDLE, PVOID, ULONG, BOOLEAN, BOOLEAN,
                                       PULONG, PULONG);
 
 /* Diagnostic: list an object directory (e.g. \ArcName, whose links name the
- * boot device the 2000/XP route must resolve to) to COM1, one entry a line,
+ * boot device the XP route must resolve to) to COM1, one entry a line,
  * between BEGIN/END markers. */
 static void trace_object_dir(const WCHAR *path)
 {
@@ -981,7 +1148,7 @@ static void trace_reg_value(const WCHAR *keypath, const WCHAR *valname)
 }
 #endif
 
-/* Binds this CD as the kernel's boot device (piece 3, the 2000/XP 0x7B). The
+/* Binds this CD as the kernel's boot device (piece 3, the XP 0x7B). The
  * kernel resolves its boot device through an ARC name, but no real device
  * registers one for the INT-13h-served medium, so this driver must. The name
  * is not a fixed cdrom(0): setupldr records it as the BIOS drive number the
@@ -1029,13 +1196,77 @@ static BOOLEAN bind_boot_device(void)
     return NT_SUCCESS(IoCreateSymbolicLink(&g_arc_name, &g_cd_name));
 }
 
+/* Whether this boot came from the served CD. Setup's graphical phase boots the
+ * installed disk with this driver still loaded: the ISO is still on the stick,
+ * but the loader and its memory are gone. Only text-mode setup's own hive has
+ * a setupdd service. */
+static BOOLEAN booted_from_cd(void)
+{
+    UNICODE_STRING kp;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+
+    RtlInitUnicodeString(&kp,
+        L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Services\\setupdd");
+    InitializeObjectAttributes(&oa, &kp, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenKey(&h, KEY_READ, &oa)))
+        return FALSE;
+    ZwClose(h);
+    return TRUE;
+}
+
+/* Whether Windows setup is still running: its graphical phase needs the CD,
+ * and the finished system does not. */
+static BOOLEAN setup_in_progress(void)
+{
+    UCHAR buf[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+    KEY_VALUE_PARTIAL_INFORMATION *pi = (KEY_VALUE_PARTIAL_INFORMATION *)buf;
+    UNICODE_STRING kp, vn;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    ULONG got = 0;
+    BOOLEAN yes = TRUE;
+
+    RtlInitUnicodeString(&kp, L"\\Registry\\Machine\\SYSTEM\\Setup");
+    InitializeObjectAttributes(&oa, &kp, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenKey(&h, KEY_READ, &oa)))
+        return TRUE;
+    RtlInitUnicodeString(&vn, L"SystemSetupInProgress");
+    if (NT_SUCCESS(ZwQueryValueKey(h, &vn, KeyValuePartialInformation, buf,
+                                   sizeof buf, &got)) &&
+        pi->DataLength == sizeof(ULONG))
+        yes = *(const ULONG *)pi->Data != 0;
+    ZwClose(h);
+    return yes;
+}
+
+/* The service's Start, to disabled: the install is done and the stick may never
+ * come back. */
+static void disable_self(PUNICODE_STRING reg)
+{
+    UNICODE_STRING vn;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    ULONG off = 4;
+
+    InitializeObjectAttributes(&oa, reg, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenKey(&h, KEY_WRITE, &oa)))
+        return;
+    RtlInitUnicodeString(&vn, L"Start");
+    (void)ZwSetValueKey(h, &vn, 0, REG_DWORD, &off, sizeof off);
+    ZwClose(h);
+}
+
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg);
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
 {
     NTSTATUS st;
+    BOOLEAN from_cd = FALSE;
     int i;
 
-    (void)reg;
 #ifdef VDISK_SERIAL_TRACE
     serial_trace("FALCONVDISK_SCSILOAD_OK\r\n");
     /* What the kernel's boot-device ARC name resolves through: the links here
@@ -1048,10 +1279,14 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     trace_reg_value(L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Control",
                     L"SystemBootDevice");
     trace_reg_value(L"\\Registry\\Machine\\SYSTEM\\Setup", L"SystemPartition");
-    /* Where Windows 2000 keeps it, since SystemBootDevice is absent there. */
+    /* The values around it, for a name kept elsewhere. */
     trace_reg_values(L"\\Registry\\Machine\\SYSTEM\\ControlSet001\\Control");
     trace_reg_values(L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control");
 #endif
+    if (g_bake.map_len != 0 && !booted_from_cd() && !setup_in_progress()) {
+        disable_self(reg);
+        return STATUS_UNSUCCESSFUL;
+    }
     RtlInitUnicodeString(&g_ctl_name, VDISK_CTL_DEVICE);
     RtlInitUnicodeString(&g_ctl_link, VDISK_CTL_LINK);
     RtlInitUnicodeString(&g_cd_name, VDISK_CD_DEVICE);
@@ -1079,17 +1314,6 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
     g_cd_dev->Flags |= DO_DIRECT_IO;
     g_cd_dev->Flags &= ~DO_DEVICE_INITIALIZING;
 
-    /* Piece 3, boot-device binding (NOT yet complete). On the baked (2000/XP)
-     * path the kernel bugchecks 0x7B with OBJECT_NAME_NOT_FOUND after this
-     * driver has loaded and resolved its backing: it cannot resolve the ARC
-     * name of its boot device to this CD. Aliasing the standard CD-ROM device
-     * name to this device is a first step: \Device\CdRom0 is FREE and this
-     * link is created (the CDROM0_LINKED marker), yet 0x7B still follows -
-     * so the boot ARC path the kernel resolves is NOT cdrom(0). The
-     * remaining work is to find the path setupldr set (enumerate \ArcName,
-     * or read how it names an El Torito no-emulation CD served over
-     * INT 13h) and make it resolve here (DESIGN Section 6.3). A WinPE build
-     * leaves map_len zero and is untouched. */
     if (g_bake.map_len != 0) {
         extmap_hdr bh;
 
@@ -1100,19 +1324,28 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
          * media is not counted. The reads come later, when the backing is up. */
         if (extmap_decode(g_bake.map, g_bake.map_len, &bh) == EXTMAP_OK)
             g_size = bh.iso_size;
+        from_cd = booted_from_cd();
+        if (from_cd && g_bake.app_blocks != 0) {
+            PHYSICAL_ADDRESS pa;
+
+            pa.QuadPart = (LONGLONG)g_bake.app_phys;
+            g_app = MmMapIoSpace(pa, (SIZE_T)g_bake.app_blocks * 2048u,
+                                 MmCached);
+            if (g_app != NULL)
+                g_size = (ULONGLONG)g_bake.total_blocks * 2048u;
+        }
 
         RtlInitUnicodeString(&g_cdrom0_name, L"\\Device\\CdRom0");
         g_cdrom0 = NT_SUCCESS(IoCreateSymbolicLink(&g_cdrom0_name, &g_cd_name));
+        /* Text-mode setup asks this count whether a CD-ROM drive exists, and
+         * cdrom.sys is what raises it for a real one. */
+        if (g_cdrom0)
+            IoGetConfigurationInformation()->CdRomCount++;
         /* Bind this CD as the kernel's boot device by the ARC name setupldr
          * recorded (read from the registry, not assumed - it is the served BIOS
          * drive number, e.g. cdrom(224) for 0xE0). This clears XP's 0x7B. */
-        g_arc = bind_boot_device();
-        /* And cdrom(224) directly, for Windows 2000, which records no
-         * SystemBootDevice: the boot CD is the drive falcon-bios serves on
-         * (0xE0 = 224), the same name XP's SystemBootDevice holds. */
-        RtlInitUnicodeString(&g_arc0_name,
-                             L"\\ArcName\\multi(0)disk(0)cdrom(224)");
-        g_arc0 = NT_SUCCESS(IoCreateSymbolicLink(&g_arc0_name, &g_cd_name));
+        if (from_cd)
+            g_arc = bind_boot_device();
 #ifdef VDISK_SERIAL_TRACE
         serial_trace(g_cdrom0 ? "FALCONVDISK_CDROM0_LINKED\r\n"
                               : "FALCONVDISK_CDROM0_EXISTS\r\n");
@@ -1123,6 +1356,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
 
     for (i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
         drv->MajorFunction[i] = vdisk_create_close;
+    drv->MajorFunction[IRP_MJ_PNP] = vdisk_pnp;
     drv->MajorFunction[IRP_MJ_READ] = vdisk_read;
     drv->MajorFunction[IRP_MJ_DEVICE_CONTROL] = vdisk_ioctl;
     drv->DriverUnload = vdisk_unload;
@@ -1154,7 +1388,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg)
         ZwClose(h);
     }
 
-    /* Piece 3: when the loader baked an extent map in (2000/XP text-mode
+    /* Piece 3: when the loader baked an extent map in (XP text-mode
      * setup), resolve the backing on its own detached thread. It must NOT block
      * DriverEntry: a boot-start driver that does not return holds up the rest of
      * the boot-start sequence, so disk.sys never enumerates the stick the

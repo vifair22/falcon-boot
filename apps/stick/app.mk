@@ -42,6 +42,7 @@ STICK_BIOS := $(STICK)/bios_main.c
 STICK_BIOS += $(BIOS_MOD_scan) $(BIOS_MOD_pos) $(BIOS_MOD_mp) $(CORE_XSTATE) $(BIOS_MOD_prompt) $(BIOS_MOD_console) $(BIOS_MOD_linux)
 STICK_BIOS += $(BIOS_MOD_iso) $(BIOS_MOD_vfd) $(BIOS_MOD_bsd) $(BIOS_MOD_win)
 STICK_BIOS += $(BIOS_MOD_lowmem)       # the residents' blocks
+STICK_BIOS += $(BIOS_MOD_swap)         # 2000/XP Setup's system disk
 STICK_BIOS += $(BIOS_MOD_heap)         # the Windows tail, the floppy image, argon2id
 STICK_BIOS += $(BIOS_MOD_jnlmem)       # a hibernated shelf, read through its journal
 STICK_BIOS += $(BIOS_MOD_task)         # the background probe's own stack
@@ -57,7 +58,7 @@ STICK_BIOS += $(CORE_UEFIBOOT)         # which UEFI machine: {ARM64 ONLY}
 STICK_BIOS += $(CORE_IDENT) $(CORE_IDENT_FS)  # the records, and the library's ID for the extent map
 
 $(eval $(call bios_app,stick,$(BIOS_STAGE3),\
-	$(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_OBJ_aptramp),\
+	$(BIOS_RES_iso) $(BIOS_RES_vfd) $(BIOS_RES_swap) $(BIOS_OBJ_aptramp),\
 	$(STICK_BIOS),\
 	$(BIOS_HOOK_OBJ) $(BIOS_HOOK32_OBJ) $(BIOS_WINJUMP_OBJ) \
 	$(BIOS_WINJUMP32_OBJ) $(BIOS_VDISK_OBJ)))

@@ -132,9 +132,80 @@ static void test_xpsetup_nospace(void **state)
                      XPSETUP_ERR_NOSPACE);
 }
 
+static void test_add_hive(void **state)
+{
+    char buf[256] = "[SourceDisksFiles]\r\n_F.SYS = 100,,4\r\n"
+                    "[HiveInfs.Fresh]\r\nAddReg = hivesys.inf,AddReg\r\n";
+    size_t len = strlen(buf), before = len;
+
+    (void)state;
+    assert_int_equal(txtsetup_add_hive(buf, &len, sizeof buf, "_F.INF",
+                                       "_F.SYS"), XPSETUP_OK);
+    buf[len] = '\0';
+    assert_string_equal(buf, "[SourceDisksFiles]\r\n_F.SYS = 100,,4\r\n"
+                             "_F.INF = 100,,4\r\n[HiveInfs.Fresh]\r\n"
+                             "AddReg = _F.INF,AddReg\r\n"
+                             "AddReg = hivesys.inf,AddReg\r\n");
+    assert_true(len > before);
+    len = strlen(buf);
+    assert_int_equal(txtsetup_add_hive(buf, &len, len, "_F.INF", "_F.SYS"),
+                     XPSETUP_ERR_NOSPACE);
+    assert_int_equal(txtsetup_add_hive(buf, &len, sizeof buf, "_F.INF",
+                                       "NOPE.SYS"), XPSETUP_ERR_NOSECTION);
+    strcpy(buf, "_F.SYS = 1\r\n");
+    len = strlen(buf);
+    assert_int_equal(txtsetup_add_hive(buf, &len, sizeof buf, "_F.INF",
+                                       "_F.SYS"), XPSETUP_ERR_NOSECTION);
+    assert_int_equal(len, strlen("_F.SYS = 1\r\n"));
+}
+
+static void test_is_win2000(void **state)
+{
+    static const char w2k[] = "[SetupData]\r\nMajorVersion = 5\r\n"
+                              "MinorVersion = 0\r\n";
+    static const char xp[] = "[SetupData]\r\nProductType = 0\r\n";
+
+    (void)state;
+    assert_int_equal(txtsetup_is_win2000(w2k, strlen(w2k)), 1);
+    assert_int_equal(txtsetup_is_win2000(xp, strlen(xp)), 0);
+    assert_int_equal(txtsetup_is_win2000((const char *)0, 0), 0);
+}
+
+static void test_usb_boot_start(void **state)
+{
+    char buf[512] =
+        "[BootBusExtenders.Load]\r\npci = pci.sys\r\n"
+        "[BootBusExtenders]\r\npci = \"PCI\",files.pci,pci\r\n"
+        "[InputDevicesSupport.Load]\r\nusbhub = usbhub.sys\r\n"
+        "hidusb = hidusb.sys\r\nusbstor = usbstor.sys\r\n"
+        "[InputDevicesSupport]\r\nusbhub = \"Hub\",files.usbhub,usbhub\r\n"
+        "hidusb = \"HID\",files.hidusb,hidusb\r\n[Other]\r\nusbstor = no\r\n";
+    size_t len = strlen(buf), before = len;
+
+    (void)state;
+    assert_int_equal(txtsetup_usb_boot_start(buf, &len, sizeof buf), XPSETUP_OK);
+    assert_int_equal(len, before);
+    buf[len] = '\0';
+    assert_string_equal(buf,
+        "[BootBusExtenders.Load]\r\nusbstor = usbstor.sys\r\n"
+        "usbhub = usbhub.sys\r\npci = pci.sys\r\n"
+        "[BootBusExtenders]\r\nusbhub = \"Hub\",files.usbhub,usbhub\r\n"
+        "pci = \"PCI\",files.pci,pci\r\n"
+        "[InputDevicesSupport.Load]\r\nhidusb = hidusb.sys\r\n"
+        "[InputDevicesSupport]\r\nhidusb = \"HID\",files.hidusb,hidusb\r\n"
+        "[Other]\r\nusbstor = no\r\n");
+    strcpy(buf, "[InputDevicesSupport.Load]\r\nusbhub = usbhub.sys\r\n");
+    len = strlen(buf);
+    assert_int_equal(txtsetup_usb_boot_start(buf, &len, sizeof buf),
+                     XPSETUP_ERR_NOSECTION);
+}
+
 int run_xpsetup_tests(void)
 {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test(test_add_hive),
+        cmocka_unit_test(test_usb_boot_start),
+        cmocka_unit_test(test_is_win2000),
         cmocka_unit_test(test_xpsetup_inject),
         cmocka_unit_test(test_xpsetup_copies_source_id),
         cmocka_unit_test(test_xpsetup_missing_section),

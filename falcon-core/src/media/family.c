@@ -415,7 +415,7 @@ const family_desc *family_detect(const family_probe *p)
         (probe_exists(p, "/bootmgr") ||
          probe_exists(p, "/EFI/Microsoft/Boot/BCD")))
         return family_by_id(FAMILY_WINDOWS);
-    /* Windows 2000/XP text-mode setup: no /sources and no WinPE - the installer
+    /* Windows XP text-mode setup, and 2000's, which the route refuses: no /sources and no WinPE - the installer
      * is i386/setupldr.bin reading i386/txtsetup.sif. The loader injects the
      * virtual-CD driver into that setup rather than patching a boot.wim
      * (DESIGN Section 6.3). */
