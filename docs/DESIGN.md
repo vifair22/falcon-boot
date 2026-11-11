@@ -3983,7 +3983,7 @@ flowchart TD
     S12["stages 1 and 2, as 11.3.2<br/>the boot partition is the ESP, or the station partition on a disk with none"] --> BM["bios_main, station_main (station/station.c)<br/>e820_read"]
     BM --> DSK["scan_disks: the boot drive, then every drive the BDA counts (0x475)<br/>each one's table (MBR or GPT) and disk id"]
     DSK --> IR["on the boot drive: install_boot_record (the install ID),<br/>marker_take (the marker sector, cleared before it is believed)"]
-    IR --> SP["read_station: the boot partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c)"]
+    IR --> SP["read_station: the boot partition mounted (FAT)<br/>/MEMTEST.BIN present? /STATION.INI parsed (stationini.c),<br/>else /EFI/falcon/STATION.INI (an ESP's UEFI half)"]
     SP --> SH["find_shelves: partitions whose LUKS2 token or /.falcon is a shelf<br/>record of the install; pos_list: a plaintext shelf's UKIs are rows<br/>(uki-&lt;stem&gt;), an encrypted shelf one row, Personal OS (encrypted)"]
     SH --> CH["find_chains: each MBR primary but the station partition whose boot<br/>sector (FAT32: and its sectors 2, 12) carries a known loader<br/>(vbr_identify): mbr-&lt;sig&gt;-p&lt;n&gt;; each other disk whose LBA 0 has<br/>boot code and an active entry: mbr-&lt;sig&gt; or gpt-&lt;8&gt;<br/>(core's media/vbr.c, which the installer shares)"]
     CH --> APP["station-legacy only (legacy_rows): jroute_init over the station<br/>partition, the rows cd, cf, usb whose driver and controller are there;<br/>station_add_own_shelf: each UKI in its /uki a row by its .osrel name"]
@@ -4260,6 +4260,7 @@ own (Windows then gives it no volume, Section 3.1).
 the ESP's reserved sectors, its one `boot` record naming them, and
 `STATION.INI`, `MEMTEST.BIN` and on legacy the drivers at its root, beside
 the UEFI station's `\EFI\falcon\`, whose own `STATION.INI` differs in its rows.
+With no `STATION.INI` at the root the BIOS half reads the UEFI half's (12.7).
 Stage 2 is in `FALCON-BIOS` on GPT and at LBA 1 on MBR. No station partition.
 FAT cannot grow its reserved sectors in place, so an ESP without the room has
 to be formatted with `mkfs.fat -F 32 -R 2080`, and every ESP falcon's recipes
@@ -4470,7 +4471,14 @@ so.
 ### 12.7 STATION.INI
 
 On the ESP (`\EFI\falcon\STATION.INI`) or in the station partition's root.
-One `[section]` per entry and `[general]` for the rest:
+A BIOS station on an ESP reads `STATION.INI` at the ESP's root, and when
+there is none there the UEFI station's `\EFI\falcon\STATION.INI`, so a
+dual-mode station can keep one file. Only one is read; the two are never
+merged. The rules below already give each loader its own reading of one
+file: a section only UEFI can match is left out on BIOS, and a `default`
+naming a row the BIOS half does not have is no default there. The UEFI
+station reads its own file only. One `[section]` per entry and `[general]`
+for the rest:
 
 ```
 [general]

@@ -215,8 +215,12 @@ static cli_status gather(upd_ctx *c)
 
     if (f->boot >= 0) {
         part_span(c, f->boot, &c->boot_off, &c->boot_len);
+        /* A BIOS station on an ESP may read the UEFI station's file in
+         * place of its own (DESIGN Section 12.7); a stick has neither. */
         f->station_ini = has_file(c, c->boot_off, c->boot_len,
-                                  "/" STATIONINI_FILE);
+                                  "/" STATIONINI_FILE) ||
+                         has_file(c, c->boot_off, c->boot_len,
+                                  STATIONINI_UEFI_PATH);
         for (i = 0; i < sizeof k_mods / sizeof k_mods[0]; i++)
             f->mods |= has_file(c, c->boot_off, c->boot_len, k_mod_paths[i]);
         if (has_file(c, c->boot_off, c->boot_len,
