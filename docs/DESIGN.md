@@ -4987,12 +4987,36 @@ from the old boot's log, so `[totp]` is not resealed: update says to boot
 the updated station and run `station totp reseal`. The same holds when the
 jumper itself is a new image (its Authenticode digest moved).
 
+A stick's signing appliance is part of the release too, and blesses with
+the sign tool and falcon-hook it was built with (7.5). Each appliance in
+an encrypted p3's `/uki` under the release's name whose Authenticode digest
+is not the release's is replaced. Signing needs the key, and the write
+needs ext4, which core reads but does not write, so update opens the shelf
+with cryptsetup (or uses the OS's mapping) and mounts it: the new image is
+signed with the MOK beside the old under a name the loader does not list
+(5.3), the old one renamed `<name>-prev.efi`, the new one renamed into
+place and synced, and read back by digest and signature. The `-prev.efi`
+is a rollback the chooser lists last; an older one is deleted first, to
+leave room. A p3 without room for both is left as it was. An appliance p3
+does not hold is not added.
+
+`--replace-shim <dir>` writes shim and MokManager from a directory over
+the ones on p1 (or in `\EFI\falcon`), each saved first and read back. It is
+the route for a shim the firmware's SBAT level has revoked, which otherwise
+leaves a stick only remaking. The loader keeps the name the old shim
+starts, so a shim naming another next stage is refused. Shim carries its
+own signature (Section 4), and whether a firmware's SBAT level accepts it
+is that firmware's to say.
+
 A pending next-boot marker is cleared, since the stages are written as
 `mkstick bios` writes them. A UEFI station with `[totp]` is resealed in
 the same run (12.15). `make test-core`'s `update-*` cases age a stick and
 a station (a stand-in over the loader, stage 3's header zeroed), update
 them and boot each under OVMF with Secure Boot and under SeaBIOS; the
-refusal case checks a blank disk is left as it was.
+refusal case checks a blank disk is left as it was; `update-appliance`
+puts a stand-in appliance on p3, updates with `--replace-shim`, checks the
+new appliance, its rollback and shim's backups, runs update again to see
+the appliance left alone, and boots through the shim it wrote.
 
 **The station bundle.** A station in the field is updated from a
 **station bundle**, one file per

@@ -116,6 +116,14 @@
 #                  then the station boots its UKI under each firmware
 #   update-refuse  `mkstick update` on a blank disk: refused, nothing
 #                  written
+#   update-appliance-uefi-sb
+#                  stick-a with an old appliance on p3 (the unsigned
+#                  stand-in as /uki/appliance-uki.efi): `mkstick update
+#                  --appliance --replace-shim` signs the new one with the
+#                  MOK beside it, keeps the old as appliance-uki-prev.efi,
+#                  writes shim and MokManager with backups; a second run
+#                  leaves the appliance; the stick boots through the shim
+#                  it wrote under Secure Boot
 #   release-stick-uefi-sb, release-stick-bios
 #                  not in the default list: tools/release/prove.sh runs them
 #                  with FALCON_RELEASE_MKSTICK naming the release's mkstick,
@@ -1187,6 +1195,112 @@ case_update_station() { # case_update_station CASE FIRMWARE
     fi
 }
 
+# p3's /uki, read through a mapping of the image's shelf: FILE copied to
+# OUT, or nothing when it is not there.
+shelf_get() { # shelf_get IMG SHELF-PART FILE OUT
+    local got=0
+    LOOP=$(sudo losetup -f --show -P "$1")
+    MAPPER=falcon-core-rig-app
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p$2" "$MAPPER" -
+    MNT=$(mktemp -d)
+    sudo mount -o ro "/dev/mapper/$MAPPER" "$MNT"
+    rm -f "$4"
+    if sudo test -f "$MNT/uki/$3"; then
+        sudo cat "$MNT/uki/$3" > "$4"
+        got=1
+    fi
+    sudo umount "$MNT"
+    rmdir "$MNT"
+    MNT=
+    sudo cryptsetup close "$MAPPER"
+    MAPPER=
+    sudo losetup -d "$LOOP"
+    LOOP=
+    (( got ))
+}
+
+# A file put on p3's /uki.
+shelf_put() { # shelf_put IMG SHELF-PART SRC NAME
+    LOOP=$(sudo losetup -f --show -P "$1")
+    MAPPER=falcon-core-rig-app
+    printf '%s' "$PASS" | sudo cryptsetup open "${LOOP}p$2" "$MAPPER" -
+    MNT=$(mktemp -d)
+    sudo mount "/dev/mapper/$MAPPER" "$MNT"
+    sudo install -m 0644 "$3" "$MNT/uki/$4"
+    sudo umount "$MNT"
+    rmdir "$MNT"
+    MNT=
+    sudo cryptsetup close "$MAPPER"
+    MAPPER=
+    sudo losetup -d "$LOOP"
+    LOOP=
+}
+
+case_update_appliance() { # case_update_appliance CASE FIRMWARE
+    local img=$R/stick-app.img why= new=build/bin/falcon-boot.efi esp
+    cp --sparse=always "$R/stick-a.img" "$img"
+    key_onto "$img" 3
+    shelf_put "$img" 3 build/test/standin.efi appliance-uki.efi
+    rm -rf "$R/upd-backup"
+    mkdir -p "$R/upd-backup"
+    ( umask 077; printf '%s' "$PASS" > "$R/pass" )
+    "$MKSTICK" update "$img" --from build/bin --passphrase-file "$R/pass" \
+        --appliance "$new" --appliance-aa64 /nonexistent-but-unused \
+        --backup-dir "$R/upd-backup" --yes >"$R/$1-update.log" 2>&1 &&
+        why="an --appliance-aa64 that is not there was not refused"
+    [[ -z "$why" ]] && { "$MKSTICK" update "$img" --from build/bin \
+        --passphrase-file "$R/pass" --appliance "$new" \
+        --replace-shim build/shim/bins --backup-dir "$R/upd-backup" --yes \
+        >"$R/$1-update.log" 2>&1 ||
+        why="mkstick update failed: $(tail -1 "$R/$1-update.log")"; }
+    if [[ -z "$why" ]]; then
+        if ! shelf_get "$img" 3 appliance-uki.efi "$R/app-new.efi"; then
+            why="the appliance is gone from p3"
+        elif ! sbverify --cert build/mok-test/falcon-test-mok.crt \
+                "$R/app-new.efi" >/dev/null 2>&1; then
+            why="the new appliance is not signed by the MOK"
+        elif cmp -s "$R/app-new.efi" build/test/standin.efi; then
+            why="the appliance is still the old one"
+        elif ! shelf_get "$img" 3 appliance-uki-prev.efi "$R/app-prev.efi" ||
+             ! cmp -s "$R/app-prev.efi" build/test/standin.efi; then
+            why="the old appliance was not kept as appliance-uki-prev.efi"
+        fi
+    fi
+    if [[ -z "$why" ]]; then
+        esp=$(part_start "$img" 1)
+        rm -f "$R/upd-shim.efi"
+        mcopy -n -i "$img@@$(( esp * 512 ))" ::/EFI/BOOT/BOOTX64.EFI "$R/upd-shim.efi"
+        cmp -s "$R/upd-shim.efi" build/shim/bins/fedora-16.1-shimx64.efi ||
+            why="p1's shim is not the one --replace-shim named"
+        ls "$R"/upd-backup/*-shim-*.efi >/dev/null 2>&1 &&
+            ls "$R"/upd-backup/*-shim-mm-*.efi >/dev/null 2>&1 ||
+            why="${why:-no backup of the old shim and MokManager}"
+    fi
+    # Again: the appliance is the release's now, and the rollback stays.
+    if [[ -z "$why" ]]; then
+        "$MKSTICK" update "$img" --from build/bin --passphrase-file "$R/pass" \
+            --appliance "$new" --backup-dir "$R/upd-backup" --yes \
+            >"$R/$1-again.log" 2>&1 ||
+            why="the second update failed: $(tail -1 "$R/$1-again.log")"
+        [[ -z "$why" ]] && { grep -q "is the release's already" "$R/$1-again.log" ||
+            why="the second update did not see the appliance as current"; }
+        [[ -z "$why" ]] && { shelf_get "$img" 3 appliance-uki-prev.efi "$R/app-prev.efi" &&
+            cmp -s "$R/app-prev.efi" build/test/standin.efi ||
+            why="the second update touched the rollback"; }
+    fi
+    rm -f "$R/pass"
+    if [[ -z "$why" ]]; then
+        boot "$2" "$img:boot"
+        wait_for "esc back" 90 || why="the menu did not come up through the new shim"
+        halt
+    fi
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "appliance replaced with a rollback, shim and MokManager replaced with backups; the stick boots"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 # The release's stick (tools/release/prove.sh): made once by the mkstick
 # FALCON_RELEASE_MKSTICK names, with no option that names a file of the
 # build, so everything comes from its data directory.
@@ -1965,7 +2079,8 @@ CASES=("$@")
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
            update-station-bios
-           update-refuse timing-uefi timing-stall-uefi lanes-uefi
+           update-refuse update-appliance-uefi-sb
+           timing-uefi timing-stall-uefi lanes-uefi
            lanes-smt-uefi lanes-alone-uefi lanes-cheap-uefi lanes-bios
            lanes-smt-bios lanes-alone-bios lanes-cheap-bios)
 
@@ -2010,6 +2125,7 @@ for c in "${CASES[@]}"; do
     update-station-uefi-sb) case_update_station "$c" uefi-sb ;;
     update-station-bios)    case_update_station "$c" bios ;;
     update-refuse)          case_update_refuse "$c" ;;
+    update-appliance-uefi-sb) case_update_appliance "$c" uefi-sb ;;
     release-stick-uefi-sb)  case_release_stick "$c" uefi-sb ;;
     release-stick-bios)     case_release_stick "$c" bios ;;
     relaunch-uefi)   case_relaunch "$c" uefi ;;
