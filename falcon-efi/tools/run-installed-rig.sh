@@ -106,7 +106,8 @@
 #                 `station remove` puts it back byte for byte
 #   esp-both      a new install on an ESP with room: both halves on it and no
 #                 station partition; both firmwares boot; one short of room
-#                 is refused with the mkfs.fat count
+#                 is refused with the mkfs.fat count; with the BIOS half's
+#                 STATION.INI deleted it boots from the UEFI half's
 #   add-bios      a UEFI station gets `station install --bios`: the install ID
 #                 kept, both firmwares boot, and each half comes off by its own
 #                 backup, the first install's first
@@ -1127,6 +1128,23 @@ case_esp_both() {
             WHY="update does not see both halves"; }
         [[ -z "$WHY" ]] && boot_both "$img" "$id"
     fi
+    # One file for both halves: with its own gone, the BIOS half reads the
+    # UEFI half's, and status, update and remove still see both.
+    if [[ -z "$WHY" ]]; then
+        mdel -i "$img@@1M" ::STATION.INI 2>/dev/null ||
+            WHY="could not delete the BIOS half's STATION.INI"
+        # shellcheck disable=SC2024
+        [[ -z "$WHY" ]] && { sudo "$MKSTICK" station status "$img" --no-scan \
+            >"$R/esp-both-one.status" 2>&1 || WHY="station status failed with one INI"; }
+        [[ -z "$WHY" ]] && { grep -q 'the BIOS half reads the UEFI half' "$R/esp-both-one.status" ||
+            WHY="status does not say the BIOS half reads the UEFI half's INI"; }
+        # shellcheck disable=SC2024
+        [[ -z "$WHY" ]] && { sudo "$MKSTICK" update "$img" --from build/bin --dry-run \
+            >"$R/esp-both-one.update" 2>&1 || WHY="update failed with one INI: $(tail -1 "$R/esp-both-one.update")"; }
+        [[ -z "$WHY" ]] && { grep -q 'stages 1-3' "$R/esp-both-one.update" ||
+            WHY="update does not see the BIOS half with one INI"; }
+        [[ -z "$WHY" ]] && boot_both "$img" "$id"
+    fi
     if [[ -z "$WHY" ]]; then
         sudo "$MKSTICK" station remove "$img" --backup "$R/esp-both.bak" \
             >/dev/null 2>&1 || WHY="station remove failed"
@@ -1134,7 +1152,7 @@ case_esp_both() {
             WHY="remove left STATION.INI at the ESP's root"
     fi
     rm -f "$img"
-    result "$c" "$WHY" "both halves on the ESP, no station partition, both firmwares boot, update sees both; a short ESP refused with the count"
+    result "$c" "$WHY" "both halves on the ESP, no station partition, both firmwares boot, update sees both, one INI serves both; a short ESP refused with the count"
 }
 
 # A UEFI station on an ESP with room gets its BIOS half: the install ID and

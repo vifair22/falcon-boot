@@ -99,6 +99,9 @@ static stationini g_ini;
 static int        g_have_ini;
 static int        g_ini_state;   /* INI_* below */
 static char       g_ini_text[INI_MAX];
+/* The file read, as messages name it: this station's own, or on an ESP the
+ * UEFI station's when this one has none (DESIGN Section 12.7). */
+static const char *g_ini_name = STATIONINI_FILE;
 
 #define INI_NONE     0
 #define INI_OK       1
@@ -211,7 +214,8 @@ static int station_read(void *ctx, uint64_t off, uint64_t len, void *buf)
 }
 
 /* The station partition is the boot partition stage 2 found (DESIGN
- * Section 12.2): STATION.INI and MEMTEST.BIN at its root. One that will not
+ * Section 12.2): STATION.INI and MEMTEST.BIN at its root, and on an ESP
+ * with no STATION.INI there the UEFI station's (12.7). One that will not
  * mount leaves both out and says so on serial; everything else still
  * boots. */
 static void read_station(void)
@@ -238,23 +242,34 @@ static void read_station(void)
         !g_memtest.is_dir && g_memtest.size > 0;
 
     if (fs_lookup(&g_svol, "/" STATIONINI_FILE, &scratch, &ini) != FS_OK ||
-        ini.is_dir)
-        return;
+        ini.is_dir) {
+        if (fs_lookup(&g_svol, STATIONINI_UEFI_PATH, &scratch, &ini) !=
+                FS_OK ||
+            ini.is_dir)
+            return;
+        g_ini_name = "\\EFI\\falcon\\" STATIONINI_FILE;
+    }
     if (ini.size > INI_MAX) {
         g_ini_state = INI_TOO_BIG;
-        bios_puts("falcon-bios: STATION.INI is larger than 16 KB\n");
+        bios_puts("falcon-bios: ");
+        bios_puts(g_ini_name);
+        bios_puts(" is larger than 16 KB\n");
         return;
     }
     if (fs_file_open(&g_svol, &f, &ini) != FS_OK ||
         fs_file_read(&f, 0, ini.size, g_ini_text) != FS_OK) {
         g_ini_state = INI_UNREAD;
-        bios_puts("falcon-bios: STATION.INI could not be read\n");
+        bios_puts("falcon-bios: ");
+        bios_puts(g_ini_name);
+        bios_puts(" could not be read\n");
         return;
     }
     g_ini_state = INI_OK;
     g_have_ini = 1;
     if (stationini_parse(g_ini_text, (size_t)ini.size, &g_ini) != 0) {
-        bios_puts("falcon-bios: STATION.INI line ");
+        bios_puts("falcon-bios: ");
+        bios_puts(g_ini_name);
+        bios_puts(" line ");
         bios_put_dec(g_ini.err_line);
         bios_puts(": ");
         bios_puts(g_ini.why);
@@ -650,7 +665,7 @@ static void ini_notice(void)
     if (g_ini_state == INI_TOO_BIG || g_ini_state == INI_UNREAD) {
         tui_ini_unread(g_ini_state == INI_TOO_BIG);
     } else if (g_ini.err_line != 0) {
-        tui_ini_line("STATION.INI", (unsigned)g_ini.err_line, g_ini.why);
+        tui_ini_line(g_ini_name, (unsigned)g_ini.err_line, g_ini.why);
     } else if (g_ini.default_name[0] != '\0' &&
                strows_find(&g_rows, g_ini.default_name) == (strow *)0) {
         bios_puts("falcon-bios: STATION.INI's default names no entry here\n");
