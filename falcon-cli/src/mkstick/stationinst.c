@@ -210,21 +210,27 @@ static cli_status shelf_resolve(const char *spec, const stn_scan *s,
 /* ---- what is already on the disk ---- */
 
 /* The halves as `update` tells them (DESIGN Section 12.14): a BIOS station is
- * the boot record naming a stage 3 with STATION.INI at its root; a UEFI
+ * the boot record naming a stage 3 with STATION.INI at its root, or on an
+ * ESP the UEFI station's file it reads in place of its own (12.7); a UEFI
  * station is the ESP's record with \EFI\falcon\STATION.INI. One partition
  * can be both. */
 static int stn_bios_station(const stn_disk *td)
 {
     static char text[16384];
     int b = records_bios_boot(&td->r);
+    uint64_t off;
+    uint64_t len;
     size_t got = 0;
 
     if (b < 0)
         return 0;
-    return stn_read_file(td->d.path, td->r.parts[b].start_lba * td->d.sector,
-                         (td->r.parts[b].end_lba - td->r.parts[b].start_lba +
-                          1u) * td->d.sector,
-                         "/" STATIONINI_FILE, text, sizeof text, &got) == FS_OK;
+    off = td->r.parts[b].start_lba * td->d.sector;
+    len = (td->r.parts[b].end_lba - td->r.parts[b].start_lba + 1u) *
+          td->d.sector;
+    return stn_read_file(td->d.path, off, len, "/" STATIONINI_FILE, text,
+                         sizeof text, &got) == FS_OK ||
+           stn_read_file(td->d.path, off, len, STATIONINI_UEFI_PATH, text,
+                         sizeof text, &got) == FS_OK;
 }
 
 /* The ESP's index, or -1. */

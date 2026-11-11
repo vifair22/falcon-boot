@@ -83,8 +83,9 @@ else
 fi
 
 # A falcon stick's boot partition carries the same record; only a station's
-# has STATION.INI.
-if ! mdir -i "$img" ::/STATION.INI >/dev/null 2>&1; then
+# has STATION.INI, its own or on an ESP the UEFI station's.
+if ! mdir -i "$img" ::/STATION.INI >/dev/null 2>&1 &&
+   ! mdir -i "$img" ::/EFI/falcon/STATION.INI >/dev/null 2>&1; then
     echo "$disk: partition $part is a falcon boot partition but not a" \
         "station's (no STATION.INI); this bundle updates stations only" >&2
     exit 1
