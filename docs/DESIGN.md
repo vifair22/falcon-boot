@@ -5264,7 +5264,10 @@ printed secret, swtpm's own log shows the seed never crossed in the clear
 (on 1.2 the enrollment's plain write is the control), the menu drops the
 code once the probe has run, and the prompt page shows it; then the other
 OVMF build, which moves PCR 0 as a firmware update does, brings the
-warning, and the station still boots its default.
+warning, and the station still boots its default. Its `totp-reseal` cases
+go on from that warning the way Manual 7.6 says: `station totp reseal` from
+that boot's record prints a new secret whose code the next boot shows, and
+`station totp remove` leaves a station that boots with no code line.
 
 ## 13. falcon jump: a boot floppy
 
