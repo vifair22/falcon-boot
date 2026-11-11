@@ -3988,7 +3988,7 @@ result is skipped unless `--force`. Its options:
 
 | option | default |
 |---|---|
-| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios`, `bios32`, `bios32-sse2` and the AArch64 columns `a64-off a64-ms a64-own` (virt under AAVMF, emulated, each wait `FALCON_CASE_A64_SCALE` (4) times as long) are asked for by name |
+| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios`, `bios32`, `bios32-sse2`, `bios-usb` and `bios-usb-late` (the Windows rows with the stick on EHCI USB, and in the late one taken away once WinPE is in memory and put back 15 s after Setup is up) and the AArch64 columns `a64-off a64-ms a64-own` (virt under AAVMF, emulated, each wait `FALCON_CASE_A64_SCALE` (4) times as long) are asked for by name |
 | `--routes "..."` | `dnd chain blessed` |
 | `--jobs N` | 3, each case taking `FALCON_CASE_MEM` (4 GiB) |
 | `--timeout S` | 300 seconds from the keypress to a verdict |

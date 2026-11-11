@@ -301,7 +301,7 @@ corpus:
     - tools/coverage/harness.sh falcon-efi/tools/mk-test-mok.sh
     # Every state, the AArch64 ones too: emulated and slow, but this gate is
     # where a release shows its arm64 media still boot.
-    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32 bios32-sse2 a64-off a64-ms a64-own" | tee corpus.log
+    - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32 bios32-sse2 bios-usb bios-usb-late a64-off a64-ms a64-own" | tee corpus.log
     - tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
     - git fetch --depth 1 origin master
     - git show FETCH_HEAD:docs/coverage.md > coverage-master.md
