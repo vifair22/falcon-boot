@@ -320,6 +320,21 @@ corpus:
           done
         tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
       done
+    # What a failed case left, kept with the job: the build directory goes
+    # with the pipeline. After the reruns, so a cell that passed alone
+    # leaves nothing.
+    - |
+      for r in "$FALCON_BUILD_DIR"/coverage/runs/*/*/result; do
+        [[ -f $r ]] || continue
+        case $(cut -f1 "$r") in FAIL|ERROR) ;; *) continue ;; esac
+        d=${r%/result}
+        k=failures/${d#"$FALCON_BUILD_DIR"/coverage/runs/}
+        mkdir -p "$k"
+        cp -a "$d/result" "$k/"
+        for f in screen.png serial.log; do
+          [[ -f $d/$f ]] && cp -a "$d/$f" "$k/"
+        done
+      done
     - tools/coverage/scorecard-diff.py coverage-master.md coverage.md | tee scorecard-diff.txt
   artifacts:
     when: always
@@ -329,6 +344,7 @@ corpus:
       - coverage.md
       - scorecard-diff.txt
       - rerun.log
+      - failures/
 
 # The pipeline's build directory goes with it. Its files are root's where a
 # job was killed before the harness handed them back, so the harness deletes

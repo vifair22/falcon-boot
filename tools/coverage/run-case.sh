@@ -333,16 +333,23 @@ sleep 2
 # black on brown (falcon-core/src/tui), with a '>' in its first cell; so it
 # can be read off the raw serial and the cursor walked down until it is the
 # image.
+#
+# The selected row's tags are drawn in the bar's colours too, and the screen
+# sends only the cells that changed, so a probe filling in a tag after the
+# row was drawn leaves "[unsigned]" as the last run in those colours. Only a
+# run that starts with the '>' is the row.
 selected_row() {
     [[ -f "$SERIAL" ]] || return 0
-    # The last run in the bar's colours: the cursor move after the colours
-    # is dropped, then everything up to the next escape of any kind, which
-    # is the one the next run starts with.
+    # Each run in the bar's colours: the cursor moves after the colours are
+    # dropped, then everything up to the next escape of any kind, which is
+    # the one the next run starts with.
     printf '%s' "$(sed -e 's/\x1b\[30m\x1b\[4[36]m/\n@ROW@/g' "$SERIAL" |
-                   grep '@ROW@' | tail -n 1 |
-                   sed -e 's/.*@ROW@//' -e 's/\x1b\[[0-9;=?]*[A-Za-z]//' \
-                       -e 's/\x1b.*//' -e 's/^ *//' -e 's/^> *//' \
-                       -e 's/ *$//')"
+                   grep '@ROW@' |
+                   sed -e 's/.*@ROW@//' \
+                       -e ':a' -e 's/^\x1b\[[0-9;=?]*[A-Za-z]//' -e 'ta' \
+                       -e 's/\x1b.*//' |
+                   grep '^>' | tail -n 1 |
+                   sed -e 's/^> *//' -e 's/ *$//')"
 }
 # Both loaders: falcon-bios sends its menu to serial as the same ANSI
 # sequences OVMF's terminal does (falcon-bios/src/console/display.c).
@@ -352,6 +359,11 @@ for ((i = 0; i < 8; i++)); do
     echo "sendkey down" | socat - UNIX-CONNECT:"$MON" >/dev/null
     sleep 1
 done
+# The key on any other row (firmware setup, /falcon) opens that row's dialog,
+# and the nudges below then boot whatever they reach.
+if [[ "$row" != *.iso* && "$row" != *.img* ]]; then
+    finish ERROR "no image row selected in the menu (last: ${row:-none})"
+fi
 
 MENU_LINES=$(serial_text | wc -l)
 echo "sendkey $KEY" | socat - UNIX-CONNECT:"$MON" >/dev/null
@@ -441,6 +453,26 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     fi
 
     after=$(serial_text | tail -n +"$((MENU_LINES + 1))")
+
+    # The route the key started: its code, drawn in the title bar
+    # (falcon-core/src/tui/screen.c) by the same flush that follows the page's
+    # "booting:" line, so it is in the text before the route's first step.
+    # A chain case that started another route would report that route's
+    # result as the chainload's. No code found (a screen too narrow for it)
+    # leaves the case to its evidence.
+    if [[ "$ROUTE" == chain && -z "${route_code:-}" ]]; then
+        page=$(sed -n '/^ *booting: /,$p' <<<"$after")
+        if (( $(grep -c '\.\.\.$' <<<"$page" || true) > 0 )); then
+            route_code=$(sed -e '1d' -e '/\.\.\.$/q' <<<"$page" |
+                         grep -o -E '(^|[^A-Za-z0-9])(CHN|IMG|DIR|D3A|WIN|WXP|BSD|BLS|EFI|POS)([^A-Za-z0-9]|$)' |
+                         head -n 1 | tr -cd 'A-Z0-9' || true)
+            route_code=${route_code:-unknown}
+            case "$route_code" in
+                CHN|IMG|unknown) ;;
+                *) finish ERROR "c started the $route_code route, not the chainload" ;;
+            esac
+        fi
+    fi
 
     # The loader patching boot.wim in memory takes a moment before it hands
     # over, so the fast nudges for cdboot's prompt restart when it does.
