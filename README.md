@@ -21,9 +21,11 @@ Just want a bootable stick? Jump to [Quick start](#quick-start).
 
 On Linux, download the tarball for your machine from the [releases page](https://git.airies.net/vifair22/falcon-boot/-/releases). I don't have an installer for Windows or macOS yet. On Windows you can use WSL and pass the USB stick through, and on macOS you can use a VM.
 
-Next, run the following commands to verify the checksum and unpack the binaries into `/usr`:
+Next, run the following commands to check the release key's signature and the checksum, and unpack the binaries into `/usr`. `falcon-release.asc` is on the releases page too; Manual Section 14.1 says how to check its fingerprint first:
 
 ```sh
+gpg --dearmor < falcon-release.asc > falcon-release.gpg
+gpgv --keyring ./falcon-release.gpg SHA256SUMS.asc SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 tar xzf falcon-boot-X.Y.Z-<arch>.tar.gz
 sudo cp -r falcon-boot-X.Y.Z/usr/. /usr/
@@ -141,7 +143,7 @@ Each release on the [releases page](https://git.airies.net/vifair22/falcon-boot/
 - mkstick and the sign tool as static binaries, with every unsigned loader they install, in one tarball per host architecture (`falcon-boot-X.Y.Z-x86_64.tar.gz`, `falcon-boot-X.Y.Z-aarch64.tar.gz`). Unpacked under `/usr`, they don't need any path options.
 - The BIOS station bundle.
 - The Falcon-Jump floppy image.
-- `SHA256SUMS` for all of the above.
+- `SHA256SUMS` for all of the above, signed with the release key (`SHA256SUMS.asc`), which I keep offline. Its public half is `falcon-release.asc`, on the releases page and in `tools/release/`.
 
 Falcon-Boot is also available as a package, `falcon-boot-bin`, in the `falcon` pacman repository on dl.airies.net. Manual Section 14 explains how to check and install all of these.
 
