@@ -924,3 +924,19 @@ unsigned stn_fw_order_first(const stn_fw *fw, uint16_t num, uint16_t *out,
     }
     return n;
 }
+
+stn_add stn_add_decide(int has_record, int bios_station, int uefi_station,
+                       int ask_bios, int ask_uefi)
+{
+    if (!has_record)
+        return STN_ADD_FRESH;
+    if (bios_station == uefi_station)
+        return STN_ADD_REFUSE;
+    if (!ask_bios && !ask_uefi)
+        return STN_ADD_NAME_IT;
+    if (ask_bios && ask_uefi)
+        return STN_ADD_REFUSE;
+    if (ask_bios)
+        return bios_station ? STN_ADD_REFUSE : STN_ADD_BIOS;
+    return uefi_station ? STN_ADD_REFUSE : STN_ADD_UEFI;
+}

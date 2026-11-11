@@ -790,6 +790,52 @@ static cli_status restore_foreign_jump(const cli_args *a, const char *bpath,
     return rc;
 }
 
+static int esp_has_uefi(const mks_disk *d, const mks_records *r, int esp)
+{
+    static char text[16384];
+    size_t got = 0;
+
+    return stn_read_file(d->path, r->parts[esp].start_lba * d->sector,
+                         (r->parts[esp].end_lba - r->parts[esp].start_lba +
+                          1u) * d->sector,
+                         "/" STN_ESP_DIR "/" STATIONINI_FILE, text,
+                         sizeof text, &got) == FS_OK;
+}
+
+/* What `station install` put at the ESP's root for the BIOS half. */
+static cli_status esp_del_bios_files(const mks_disk *d, const mks_records *r,
+                                     int esp)
+{
+    static const char *const names[] = {
+        STATIONINI_FILE, STN_BIOS_MEMTEST,
+        "ATA.MOD", "EHCI.MOD", "UHCI.MOD", "OHCI.MOD", "PCC.MOD",
+        "ATA.MOD.gz", "EHCI.MOD.gz", "UHCI.MOD.gz", "OHCI.MOD.gz", "PCC.MOD.gz"
+    };
+    uint64_t off = r->parts[esp].start_lba * d->sector;
+    uint64_t len = (r->parts[esp].end_lba - r->parts[esp].start_lba + 1u) *
+                   d->sector;
+    char one[1];
+    char path[32];
+    size_t got;
+    size_t i;
+    cli_status rc;
+
+    for (i = 0; i < sizeof names / sizeof names[0]; i++) {
+        int st;
+
+        got = 0;
+        (void)snprintf(path, sizeof path, "/%s", names[i]);
+        st = stn_read_file(d->path, off, len, path, one, sizeof one, &got);
+        if (st != FS_OK && st != FS_ERR_RANGE)
+            continue;
+        rc = stn_mtools_del(d->path, off, names[i]);
+        if (rc != CLI_OK)
+            return rc;
+        log_info("deleted \\%s from the ESP", names[i]);
+    }
+    return CLI_OK;
+}
+
 static cli_status remove_run_arch(const cli_args *a)
 {
     static uint8_t hdr[STN_BK_HDR];
@@ -799,6 +845,10 @@ static cli_status remove_run_arch(const cli_args *a)
     const char *target;
     int full = cli_flag(a, "full");
     int dry = cli_flag(a, "dry-run");
+    int keep_lba0;
+    int bios_stays;
+    int uefi_stays;
+    int esp;
     uint8_t *data[STN_BK_MAX_RUNS];
     stn_backup b;
     char idhex[33];
@@ -869,12 +919,34 @@ static cli_status remove_run_arch(const cli_args *a)
                        "mounted; unmount it first", b.esp_part, d.path);
         goto out;
     }
+    /* A UEFI install's backup predates a BIOS half added later: its LBA 0
+     * has no stage 1 and its table no FALCON-BIOS partition. */
+    keep_lba0 = (b.flags & STN_FLAG_BIOS) == 0u &&
+                records_bios_boot(&r) >= 0;
+    if (keep_lba0 && full) {
+        rc = set_error(CLI_ERR_INVALID, "%s has a BIOS station added after "
+                       "this backup, which its table does not have. Remove "
+                       "the BIOS half first, or leave out --full", d.path);
+        goto out;
+    }
+    /* One record serves both halves on an ESP: the half that stays keeps it,
+     * whatever this backup saved of the sector. */
+    esp = stn_find_esp(&r);
+    bios_stays = keep_lba0 && records_bios_boot(&r) == esp;
+    uefi_stays = (b.flags & STN_FLAG_BIOS_ESP) != 0u &&
+                 (b.flags & STN_FLAG_UEFI) == 0u && esp >= 0 &&
+                 esp_has_uefi(&d, &r, esp);
 
     for (i = 0; i < b.n_runs; i++) {
         const stn_run *run = &b.runs[i];
 
         log_info("%s %s: %s (LBA %llu, %llu sector(s))",
-                 stn_run_restores(run, full) ? "restore" : "keep   ",
+                 stn_run_restores(run, full) &&
+                         !(keep_lba0 && run->disk == 0u &&
+                           run->kind == STN_RUN_LBA0) &&
+                         !((bios_stays || uefi_stays) &&
+                           run->kind == STN_RUN_ESP_BOOT)
+                     ? "restore" : "keep   ",
                  run->disk == 0u ? d.path : b.disks[run->disk],
                  run_name(run->kind), (unsigned long long)run->lba,
                  (unsigned long long)run->sectors);
@@ -962,17 +1034,24 @@ static cli_status remove_run_arch(const cli_args *a)
             goto out;
     }
 
+    if ((b.flags & STN_FLAG_BIOS_ESP) != 0u && esp >= 0) {
+        rc = esp_del_bios_files(&d, &r, esp);
+        if (rc != CLI_OK)
+            goto out;
+    }
+
     /* Every run but the target's LBA 0, then that. */
     for (i = 0; i < b.n_runs && rc == CLI_OK; i++) {
         const stn_run *run = &b.runs[i];
         const char *path = run->disk == 0u ? d.path : b.disks[run->disk];
 
         if (!stn_run_restores(run, full) ||
-            (run->disk == 0u && run->kind == STN_RUN_LBA0))
+            (run->disk == 0u && run->kind == STN_RUN_LBA0) ||
+            ((bios_stays || uefi_stays) && run->kind == STN_RUN_ESP_BOOT))
             continue;
         rc = write_run(path, b.sector, run, data[i], 0);
     }
-    for (i = 0; i < b.n_runs && rc == CLI_OK; i++) {
+    for (i = 0; i < b.n_runs && rc == CLI_OK && !keep_lba0; i++) {
         const stn_run *run = &b.runs[i];
 
         if (run->disk == 0u && run->kind == STN_RUN_LBA0)
@@ -981,6 +1060,19 @@ static cli_status remove_run_arch(const cli_args *a)
     }
     if (rc != CLI_OK)
         goto out;
+
+    if (uefi_stays) {
+        ident_rec rec;
+
+        memset(&rec, 0, sizeof rec);
+        rec.version = IDENT_VERSION;
+        rec.role = IDENT_ROLE_BOOT;
+        memcpy(rec.install_id, b.install_id, IDENT_ID_LEN);
+        rc = records_write_boot(d.path, r.parts[esp].start_lba * d.sector,
+                                &rec);
+        if (rc != CLI_OK)
+            goto out;
+    }
 
     /* The FALCON-BIOS partition held stage 2 and nothing else; without
      * --full, whose table restore drops it, it goes by itself. */

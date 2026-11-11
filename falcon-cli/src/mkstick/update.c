@@ -171,14 +171,14 @@ static int same_id(const upd_ctx *c, int a, int b)
                   IDENT_ID_LEN) == 0;
 }
 
-/* The ESP whose `boot` record has no stage 3: the UEFI station's. */
+/* The ESP carrying a `boot` record: the UEFI station's, and the BIOS one's too
+ * when the record names a stage 3. A stick's is told apart by its library. */
 static int esp_boot(const mks_records *r)
 {
     int i = stn_find_esp(r);
 
     if (i < 0 || r->recs[i].state != REC_OK ||
-        r->recs[i].rec.role != IDENT_ROLE_BOOT ||
-        r->recs[i].rec.stage3_sector != 0u)
+        r->recs[i].rec.role != IDENT_ROLE_BOOT)
         return -1;
     return i;
 }

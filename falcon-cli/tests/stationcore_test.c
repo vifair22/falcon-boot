@@ -963,6 +963,33 @@ static void test_arch_names(void **state)
     assert_string_equal(stn_n()->loader_file, "falcon-boot-station.efi");
 }
 
+static void test_add_decide(void **state)
+{
+    (void)state;
+
+    /* Nothing there: whatever is asked is a fresh install. */
+    assert_int_equal(stn_add_decide(0, 0, 0, 0, 0), STN_ADD_FRESH);
+    assert_int_equal(stn_add_decide(0, 0, 0, 1, 1), STN_ADD_FRESH);
+
+    /* One half: the other, when it is named. */
+    assert_int_equal(stn_add_decide(1, 0, 1, 1, 0), STN_ADD_BIOS);
+    assert_int_equal(stn_add_decide(1, 1, 0, 0, 1), STN_ADD_UEFI);
+    assert_int_equal(stn_add_decide(1, 0, 1, 0, 0), STN_ADD_NAME_IT);
+    assert_int_equal(stn_add_decide(1, 1, 0, 0, 0), STN_ADD_NAME_IT);
+
+    /* The half that is there is not installed again. */
+    assert_int_equal(stn_add_decide(1, 0, 1, 0, 1), STN_ADD_REFUSE);
+    assert_int_equal(stn_add_decide(1, 1, 0, 1, 0), STN_ADD_REFUSE);
+    assert_int_equal(stn_add_decide(1, 0, 1, 1, 1), STN_ADD_REFUSE);
+    assert_int_equal(stn_add_decide(1, 1, 0, 1, 1), STN_ADD_REFUSE);
+
+    /* Both halves, and a record that is neither (a stick). */
+    assert_int_equal(stn_add_decide(1, 1, 1, 1, 0), STN_ADD_REFUSE);
+    assert_int_equal(stn_add_decide(1, 1, 1, 0, 0), STN_ADD_REFUSE);
+    assert_int_equal(stn_add_decide(1, 0, 0, 1, 0), STN_ADD_REFUSE);
+    assert_int_equal(stn_add_decide(1, 0, 0, 0, 1), STN_ADD_REFUSE);
+}
+
 int run_stationcore_tests(void)
 {
     const struct CMUnitTest tests[] = {
@@ -987,6 +1014,7 @@ int run_stationcore_tests(void)
         cmocka_unit_test(test_jump_plan),
         cmocka_unit_test(test_fw_parse),
         cmocka_unit_test(test_is_esp_jump),
+        cmocka_unit_test(test_add_decide),
     };
 
     return cmocka_run_group_tests_name("stationcore", tests, NULL, NULL);

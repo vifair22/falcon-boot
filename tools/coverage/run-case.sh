@@ -62,7 +62,8 @@
 #
 # The result file is one line: VERDICT<TAB>REASON<TAB>SECONDS.
 # Env: FALCON_CASE_MEM, FALCON_CASE_CPUS, FALCON_CASE_SHOTS and
-# FALCON_CASE_LINGER, each described where it is read.
+# FALCON_CASE_LINGER, each described where it is read; FALCON_CASE_XP_KEY and
+# FALCON_CASE_XP64_KEY, the product keys of tools/coverage/run-xp-install.sh.
 
 set -euo pipefail
 
@@ -89,6 +90,14 @@ esac
 
 mkdir -p "$OUTDIR"
 OUTDIR=$(readlink -f "$OUTDIR")
+
+# XP's Setup has no serial, network or first screen this script can judge, and
+# a case takes tens of minutes, so it has a rig of its own with its own limits.
+if [[ "$CASE" == windows-xp-* && "$STATE" == bios* && "$ROUTE" == dnd ]]; then
+    [[ "$CASE" == *x64* ]] && export FALCON_CASE_XP_KEY=${FALCON_CASE_XP64_KEY:-}
+    exec tools/coverage/run-xp-install.sh "$STICK" "$STATE" "$OUTDIR"
+fi
+
 SERIAL="$OUTDIR/serial.log"
 PCAP="$OUTDIR/net.pcap"
 # The monitor's socket lives in a directory of its own under /tmp, not in
