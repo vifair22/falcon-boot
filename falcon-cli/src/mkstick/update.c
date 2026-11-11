@@ -900,6 +900,7 @@ static cli_status put_appliance(const char *ukidir, const char *src,
         return CLI_OK;
     }
     free(buf);
+    buf = NULL;
     cli_error_clear();
     if (rc != CLI_OK)
         return rc;
