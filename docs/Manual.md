@@ -4039,6 +4039,8 @@ attaches them to the GitLab release, from the project's package registry.
 | `falcon-station-X.Y.Z.tar.gz` | the BIOS station bundle, for a station on a machine with no build (Section 7.8) |
 | `falcon-jump-X.Y.Z.img` | the falcon jump floppy, 1.44 MB, ready to write (Section 9) |
 | `SHA256SUMS` | the four files' SHA-256 |
+| `SHA256SUMS.asc` | `SHA256SUMS`'s detached signature by the release key, added by its holder after the pipeline (14.1) |
+| `falcon-release.asc` | the release key's public half, as `tools/release/falcon-release.asc` holds it |
 
 Every loader in them is unsigned: `mkstick` signs one with the MOK of the
 stick or station it installs to (Section 11.1). The main tarballs carry the
@@ -4047,9 +4049,22 @@ signing appliance's UKI, unsigned too; `create` signs it the same way
 
 ### 14.1 Checking a download
 
+The release key signs `SHA256SUMS`. It is held offline by the project's
+owner, never by CI, and is not the pacman repository's key (14.3). Its
+public half is `tools/release/falcon-release.asc` in the repository and
+`falcon-release.asc` on each release; check its fingerprint once:
+
+    gpg --show-keys falcon-release.asc
+
+against the one in the repository's copy, then check a download:
+
+    gpg --dearmor < falcon-release.asc > falcon-release.gpg
+    gpgv --keyring ./falcon-release.gpg SHA256SUMS.asc SHA256SUMS
     sha256sum -c SHA256SUMS
 
-compares the files with the checksums the release page also shows. The
+`gpgv` says `Good signature` and exits 0 when `SHA256SUMS` is the one the
+key signed; the third line compares the files with it, as the release page
+also shows the checksums. A release before 1.0 has no signature. The
 tarball and the station bundle carry their own `MANIFEST`, which
 `sha256sum -c MANIFEST` checks and which catches a file that changed after
 it was unpacked. The bundle's `update.sh` runs that check; nothing runs it
@@ -4136,4 +4151,19 @@ packages (`fetch-shims.sh`, Section 13.6) and memtest86+'s release binaries
 pipeline runs the same target with the fixture store's memtest86+, checks
 that the tag is `release_version`'s, and publishes with
 `tools/release/publish.sh`.
+
+Then the release key's holder signs it, on the machine that keeps the key:
+
+    tools/release/sign-sums.sh vX.Y.Z
+
+fetches `SHA256SUMS` and the four files from the release, checks them,
+signs `SHA256SUMS` with the key whose public half is
+`tools/release/falcon-release.asc`, verifies the signature with `gpgv`
+against that file alone, and attaches `SHA256SUMS.asc` and
+`falcon-release.asc` to the release (`glab`, logged in to git.airies.net).
+
+The key is made once, offline, and its public half committed:
+
+    gpg --quick-generate-key "falcon-boot release key" ed25519 sign never
+    gpg --armor --export <fingerprint> > tools/release/falcon-release.asc
 

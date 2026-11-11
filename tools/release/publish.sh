@@ -6,7 +6,7 @@
 # with a link to each. The version is the tag's, which the caller has
 # already checked against release_version. SHA256SUMS goes up with the
 # rest; its signature is the release key holder's and is added to the
-# release afterwards (docs/Manual.md Section 14).
+# release afterwards by tools/release/sign-sums.sh (docs/Manual.md 14.1).
 #
 # Usage: tools/release/publish.sh DIR
 # Env:   the pipeline's CI_API_V4_URL, CI_PROJECT_ID, CI_JOB_TOKEN,
