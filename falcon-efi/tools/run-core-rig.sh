@@ -149,6 +149,10 @@
 #   no-p4-uefi, no-p4-bios
 #                  a stick `mkstick create --no-p4` made (p1 to p3): judged
 #                  as uefi-stick, the personal OS off its shelf
+#   p3-plain-uefi, p3-plain-bios
+#                  a stick `mkstick create --p3-plain` made: its row is
+#                  Personal OS (plaintext shelf), and Enter on it starts
+#                  the shelf's UKI with no passphrase prompt
 #   no-p3-uefi     a stick `mkstick create --no-p3` made (p1 and p2): no
 #                  Personal OS row, and payload-test.iso boots off its library
 #   interactive-uefi, interactive-bios
@@ -364,6 +368,9 @@ fs_stick() {    # fs_stick NAME P2_FS P3_FS [no-p4|no-p3|interactive]
     case ${4:-} in
     interactive) shelf=() ;;
     no-p3) shelf=(--no-p3 --key-out "$R/keys-$1") ;;
+    p3-plain) shelf=(--p3-plain --key-out "$R/keys-$1" --p3-size 320M
+                     --p4-size rest --p3-fs "$3" --passphrase-file "$R/pass"
+                     --uki build/test/fixture-uki.efi) ;;
     no-p4) shelf=(--no-p4 --p3-size 320M --p3-fs "$3"
                   --passphrase-file "$R/pass" --uki build/test/fixture-uki.efi) ;;
     *)     shelf=(--p3-size 320M --p4-size rest --p3-fs "$3"
@@ -446,6 +453,32 @@ fs_case() {
     fi
     stick_case "$1" "$2" "$(cat "$R/stick-$3.id")" "$3.iso" "" "" \
         "$R/stick-$3.img:boot"
+}
+
+# fs_plain CASE FIRMWARE: the --p3-plain stick's row, and its UKI started
+# with no prompt.
+fs_plain() {
+    local why=
+    if ! fs_stick p3plain exfat ext4 p3-plain; then
+        result "$1" 0 "the p3plain stick did not build ($R/stick-p3plain.build)"
+        return
+    fi
+    boot "$2" "$R/stick-p3plain.img:boot"
+    wait_for "Personal OS (plaintext shelf)" 90 ||
+        why="no Personal OS (plaintext shelf) row"
+    if [[ -z "$why" ]]; then
+        sleep 1
+        mon "sendkey ret"
+        wait_for "FALCON-UKI-INIT" 90 || why="the shelf's UKI did not start"
+        has "passphrase for the encrypted partition" &&
+            why="${why:-a plaintext shelf asked for a passphrase}"
+    fi
+    halt
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "plaintext shelf row; its UKI started with no prompt"
+    else
+        result "$1" 0 "$why"
+    fi
 }
 
 # fs_iso CASE NAME P2_FS P3_FS [LAYOUT]: payload-test.iso off that stick's
@@ -1927,6 +1960,7 @@ CASES=("$@")
            fs-p2-fat-iso-uefi fs-p3-btrfs-uefi fs-p3-btrfs-bios
            fs-p3-xfs-uefi fs-p3-xfs-bios fs-p3-xfs-dirty-uefi
            fs-p3-xfs-dirty-bios no-p4-uefi no-p4-bios no-p3-uefi
+           p3-plain-uefi p3-plain-bios
            interactive-uefi interactive-bios
            relaunch-uefi relaunch-uefi-sb probe-keys-uefi probe-keys-bios
            update-stick-uefi-sb update-stick-bios update-station-uefi-sb
@@ -1994,6 +2028,8 @@ for c in "${CASES[@]}"; do
     no-p4-uefi|no-p4-bios)
         fs_case "$c" "${c##*-}" no-p4 exfat ext4 no-p4 ;;
     no-p3-uefi) fs_iso "$c" no-p3 exfat ext4 no-p3 ;;
+    p3-plain-uefi) fs_plain "$c" uefi ;;
+    p3-plain-bios) fs_plain "$c" bios ;;
     interactive-uefi|interactive-bios)
         fs_case "$c" "${c##*-}" interactive exfat ext4 interactive ;;
     fs-p3-xfs-dirty-uefi|fs-p3-xfs-dirty-bios)
