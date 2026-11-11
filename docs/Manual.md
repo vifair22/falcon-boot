@@ -947,9 +947,12 @@ build reads them from `build/appliance/`. Each one the stick has a loader
 for goes on an encrypted p3; `--appliance` and `--appliance-aa64` name
 others, and `--no-appliance` leaves them off.
 
-On an existing stick, sign it with the stick's MOK (Section 11.1) and copy
-it into p3's `/uki` (5.4). The loader takes a UKI as the appliance by its
-name: it must start with `appliance`, in any case.
+On an existing stick, `update` (10.7) replaces each appliance p3 holds
+with the release's, signed with the stick's MOK, and keeps the old one as
+`appliance-uki-prev.efi`. An appliance from elsewhere is signed with the
+stick's MOK (Section 11.1) and copied into p3's `/uki` (5.4). The loader
+takes a UKI as the appliance by its name: it must start with `appliance`,
+in any case.
 
 ### 4.4 falcon-boot-sign
 
@@ -2893,6 +2896,8 @@ it (`the TPM refused: code 0x00000001 in EstablishTransport`).
 ### 10.7 update
 
     falcon-boot-mkstick update <disk> [--from <dir>] [--shim <dir>]
+        [--replace-shim <dir>] [--appliance <file>] [--appliance-aa64 <file>]
+        [--keep-appliance]
         [--arch <x64|aa64>] [--backup-dir <dir>] [--passphrase-file <file>]
         [--key <file> --cert <file>]
         [--owner-auth-file <file>] [--dry-run] [--yes]
@@ -2905,6 +2910,9 @@ Section 12.14). The test rig's options (`--tpm-socket`, `--event-log`,
 |---|---|---|
 | `--from` | `build/bin` | the built loaders: `falcon-boot.efi`, `falcon-boot-aa64.efi`, `falcon-boot-station.efi`, `falcon-esp-jump.efi` (with `-aa64` for an AArch64 station), the BIOS stages, and `mod/` |
 | `--shim` | `build/shim/bins` | shimaa64 and its MokManager, for a stick that has no AArch64 chain yet |
+| `--replace-shim` | off | replaces shim and MokManager with the ones in `<dir>`: a stick's on p1 (and its AArch64 pair, when `<dir>` has one), or a station's in `\EFI\falcon` |
+| `--appliance`, `--appliance-aa64` | `build/appliance/appliance-uki.efi`, `-aa64.efi` | the signing appliances a stick's p3 gets; a default that is not built is left out |
+| `--keep-appliance` | off | leaves a stick's appliances as they are |
 | `--arch` | this machine's | the station's architecture, `x64` or `aa64` (10.6) |
 | `--backup-dir` | `.` | where what is replaced is saved |
 | `--passphrase-file` | prompt | the shelf's passphrase; the open shelf's mapping is then not used |
@@ -2917,7 +2925,7 @@ What the disk is comes from its records:
 
 | disk | found by | written |
 |---|---|---|
-| stick | a boot record, with a library of its install ID (and its shelf, unless made `--no-p3`) | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1 |
+| stick | a boot record, with a library of its install ID (and its shelf, unless made `--no-p3`) | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1; each appliance on an encrypted p3 that is not the release's |
 | BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
 | UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |
@@ -2972,10 +2980,38 @@ to `--backup-dir` first, `<stamp>` being `YYYYMMDD-HHMMSS`:
 | `<disk>-stick-loader-<stamp>.efi`, `<disk>-station-loader-<stamp>.efi` | copy it back over the loader with `mcopy` |
 | `<disk>-esp-jump-<stamp>.efi` | copy it back over `\EFI\BOOT\BOOTX64.EFI` with `mcopy` |
 | `<disk>-bootx64-<stamp>.efi` | `falcon-boot-mkstick station remove --bootx64 <file>`, or `mcopy` it back over `\EFI\BOOT\BOOTX64.EFI` |
+| `<disk>-shim-<stamp>.efi`, `<disk>-shim-mm-<stamp>.efi` | copy them back over shim and MokManager with `mcopy` |
+| `appliance-uki-prev.efi` on p3 | boot it from the chooser, or rename it over `appliance-uki.efi` |
 
-It keeps every record, `STATION.INI`, `/uki`, shim, MokManager, the
-certificate and the firmware's boot entries. It clears a pending next-boot
-marker.
+**The appliance.** On a stick with an encrypted p3, each appliance in
+`/uki` named as the release's (`appliance-uki.efi`,
+`appliance-uki-aa64.efi`) whose Authenticode digest is not the release's
+is replaced: the shelf is opened (through its OS's mapping when that has
+it open, else with the passphrase already given), the new one is signed
+with the MOK and written beside the old, and the old one becomes
+`appliance-uki-prev.efi`, which the chooser lists last and boots as a
+rollback. An older `-prev.efi` is deleted first. An appliance p3 does not
+hold is not added. The plan says
+
+    write: p3 /uki/appliance-uki.efi from <file>, signed with the stick's MOK, where the shelf holds it and it is not the release's; the old one kept as its -prev.efi
+
+and the run `p3: /uki/appliance-uki.efi signed, written and read back`,
+or `is the release's already`. When p3 has no room for the new one beside
+the old, it stops with `the new appliance-uki.efi did not go onto the
+shelf beside the old one`, and the old one stays.
+
+**Shim.** `--replace-shim <dir>` writes shim and MokManager from `<dir>`
+over the ones there, each saved first (`<disk>-shim-<stamp>.efi`,
+`<disk>-shim-mm-<stamp>.efi`). It is for a shim the firmware has revoked
+(SBAT) or a newer vendor's. The loader keeps its name, so a shim that
+starts another one is refused: `<file> starts <name>, and the loader is
+<name>`. A firmware whose SBAT level revokes the new shim does not boot it
+either, and `update` cannot read that machine's level; boot the stick
+there before relying on it.
+
+It keeps every record, `STATION.INI`, the rest of `/uki`, shim and
+MokManager (unless `--replace-shim`), the certificate and the firmware's
+boot entries. It clears a pending next-boot marker.
 
 A UEFI station with `[totp]` is resealed to the new loader in the same
 run, and prints a new secret for the authenticator. Run it from the system

@@ -16,9 +16,16 @@
  *          and one from before the jumper is migrated (updatecore.h).
  *   TOTP  a UEFI station with [totp] is resealed at once, to what the new
  *          loader will measure (stn_totp_reseal_update).
+ *   p3    a stick's signing appliance in /uki, where the shelf holds it and
+ *          the release's differs, signed with the MOK and written beside
+ *          the old one, which stays as <name>-prev.efi when there is room.
+ *   shim  with --replace-shim, shim and MokManager from a directory, the
+ *          old ones saved first; the loader keeps its name, so a shim that
+ *          starts another is refused.
  *
- * It keeps every record, STATION.INI, /uki, shim, MokManager and the
- * certificate, the firmware's boot entries and every other partition. The
+ * It keeps every record, STATION.INI, the rest of /uki, shim, MokManager
+ * (unless --replace-shim) and the certificate, the firmware's boot entries
+ * and every other partition. The
  * next-boot marker is cleared, as `mkstick bios` clears it: an update is
  * not a moment anything is queued for.
  */
@@ -26,9 +33,11 @@
 #include <mkstick/mkstick.h>
 
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -38,6 +47,7 @@
 #include <common/proc.h>
 #include <common/util.h>
 #include <mkstick/bioscore.h>
+#include <mkstick/cleanup.h>
 #include <mkstick/disk.h>
 #include <mkstick/keys.h>
 #include <mkstick/pass.h>
@@ -55,8 +65,15 @@
 
 #define DEFAULT_FROM FALCON_DATADIR "/bin"
 #define DEFAULT_SHIM FALCON_DATADIR "/shim/bins"
+/* The signing appliance as the release ships it, unsigned (as create's). */
+#define DEFAULT_APPLIANCE      FALCON_DATADIR "/appliance/appliance-uki.efi"
+#define DEFAULT_APPLIANCE_AA64 FALCON_DATADIR "/appliance/appliance-uki-aa64.efi"
 /* A loader, a stage 3 or a shim is well under this. */
 #define FILE_MAX ((size_t)16 * 1024 * 1024)
+/* An appliance UKI, a kernel and its initramfs, is well under this. */
+#define APP_MAX ((size_t)256 * 1024 * 1024)
+/* The chains --replace-shim can write: a stick's two, or a station's. */
+#define SHIM_CHAINS 2u
 
 static const char *const k_mods[] = {
     "ATA.MOD", "EHCI.MOD", "UHCI.MOD", "OHCI.MOD", "PCC.MOD"
@@ -64,6 +81,17 @@ static const char *const k_mods[] = {
 static const char *const k_mod_paths[] = {
     "/ATA.MOD", "/EHCI.MOD", "/UHCI.MOD", "/OHCI.MOD", "/PCC.MOD"
 };
+
+/* One chain's shim and MokManager for --replace-shim. */
+typedef struct {
+    const char *dir;              /* EFI/BOOT or EFI/falcon */
+    const char *name;             /* shim's name there */
+    const char *what;             /* backup stem */
+    uint64_t    off, len;
+    char        src[MKS_PATH_MAX];
+    char        mm_name[SHIM_NEXT_STAGE_MAX];
+    char        mm_src[MKS_PATH_MAX];
+} upd_shim;
 
 typedef struct {
     const char *target;
@@ -93,6 +121,19 @@ typedef struct {
      * replaced, so PCR 4 moves and the reseal cannot predict it. */
     int         jump_moved;
     char        stamp[32];
+    /* The shelf's passphrase, kept from the key's unlock for the appliance
+     * step's own open of the shelf, and wiped when update ends. */
+    mks_pass    pass;
+    int         have_pass;
+    /* The shelf's mapping when its OS holds it open (/dev/dm-3), else "". */
+    char        shelf_dev[300];
+    /* The appliance step: the release's images, x86-64 then AArch64, "" for
+     * one this release does not carry. */
+    int         appliance;
+    char        app_src[2][MKS_PATH_MAX];
+    /* --replace-shim: what is written, chain by chain. */
+    size_t      n_shims;
+    upd_shim    shim[SHIM_CHAINS];
 } upd_ctx;
 
 static void part_span(const upd_ctx *c, int i, uint64_t *off, uint64_t *len)
@@ -298,7 +339,8 @@ static cli_status gather(upd_ctx *c)
 /* A shelf its OS has open (DESIGN 12.14): the keypair read through the
  * mapping, with no passphrase. 1 when it was, 0 when the shelf is not open
  * or the mapping does not give the keypair, which leaves the passphrase. */
-static int open_key_mapped(shelf_key *sk, const mks_disk *sd, uint32_t num)
+static int open_key_mapped(shelf_key *sk, const mks_disk *sd, uint32_t num,
+                           char *dev_out, size_t dev_cap)
 {
     char real[MKS_PATH_MAX];
     char node[MKS_PATH_MAX];
@@ -329,6 +371,7 @@ static int open_key_mapped(shelf_key *sk, const mks_disk *sd, uint32_t num)
     }
     log_info("the MOK is read off the shelf, open as /dev/mapper/%s, into "
              "memory", name);
+    (void)snprintf(dev_out, dev_cap, "%s", dev);
     return 1;
 }
 
@@ -378,7 +421,8 @@ static cli_status open_key(upd_ctx *c, const cli_args *a, shelf_key *sk,
         luks = s.shelf_luks;
     }
     if (luks && cli_value(a, "passphrase-file", NULL) == NULL &&
-        open_key_mapped(sk, sd, p->number)) {
+        open_key_mapped(sk, sd, p->number, c->shelf_dev,
+                        sizeof c->shelf_dev)) {
         *keys = sk->k;
         return CLI_OK;
     }
@@ -396,6 +440,10 @@ static cli_status open_key(upd_ctx *c, const cli_args *a, shelf_key *sk,
     rc = shelf_key_open(sk, sd->path, p->start_lba * sd->sector,
                         (p->end_lba - p->start_lba + 1u) * sd->sector, luks,
                         luks ? &pass : NULL);
+    if (rc == CLI_OK && luks && c->appliance) {
+        c->pass = pass;
+        c->have_pass = 1;
+    }
     pass_wipe(&pass);
     if (rc != CLI_OK)
         return rc;
@@ -717,6 +765,405 @@ static cli_status jump_entry(const upd_ctx *c)
     return CLI_OK;
 }
 
+/* ---- p3: the signing appliance ---- */
+
+/* The release's appliances, when the stick has an encrypted shelf, which
+ * is the only kind create gives one (DESIGN Section 7.5). A default that
+ * is not built here is left out; a path given and missing is an error. */
+static cli_status plan_appliance(upd_ctx *c, const cli_args *a)
+{
+    static const char *const opt[2] = { "appliance", "appliance-aa64" };
+    static const char *const def[2] = { DEFAULT_APPLIANCE,
+                                        DEFAULT_APPLIANCE_AA64 };
+    size_t i;
+
+    if (c->p.kind != UPD_STICK || c->f.shelf < 0 ||
+        !c->r.recs[c->f.shelf].luks || cli_flag(a, "keep-appliance"))
+        return CLI_OK;
+    for (i = 0; i < 2u; i++) {
+        const char *src = cli_value(a, opt[i], NULL);
+
+        if (src != NULL && !util_is_file(src))
+            return set_error(CLI_ERR_NOTFOUND, "no appliance at %s", src);
+        if (src == NULL)
+            src = util_is_file(def[i]) ? def[i] : NULL;
+        if (src == NULL)
+            continue;
+        (void)snprintf(c->app_src[i], sizeof c->app_src[i], "%s", src);
+        c->appliance = 1;
+    }
+    return CLI_OK;
+}
+
+/* The shelf partition as a block device: a node of the stick, or a loop
+ * device over an image's partition, registered for cleanup. */
+static cli_status shelf_part_dev(const upd_ctx *c, char *dev, size_t cap,
+                                 int *looped)
+{
+    const part_entry *p = &c->r.parts[c->f.shelf];
+    uint64_t off = p->start_lba * c->d.sector;
+    uint64_t len = (p->end_lba - p->start_lba + 1u) * c->d.sector;
+    char real[MKS_PATH_MAX];
+    char node[MKS_PATH_MAX];
+    char offs[32];
+    char lens[32];
+    size_t n = 0;
+    cli_status rc;
+
+    *looped = 0;
+    if (c->d.is_block) {
+        if (realpath(c->d.path, real) == NULL)
+            (void)snprintf(real, sizeof real, "%s", c->d.path);
+        rc = disk_partition_name(util_basename(real), p->number, node,
+                                 sizeof node);
+        if (rc != CLI_OK)
+            return rc;
+        if (snprintf(dev, cap, "/dev/%s", node) >= (int)cap)
+            return set_error(CLI_ERR_RANGE, "the shelf's node is too long");
+        return CLI_OK;
+    }
+    (void)snprintf(offs, sizeof offs, "%llu", (unsigned long long)off);
+    (void)snprintf(lens, sizeof lens, "%llu", (unsigned long long)len);
+    rc = proc_capture_l(dev, cap, &n, "losetup", "--find", "--show",
+                        "--offset", offs, "--sizelimit", lens, c->d.path,
+                        PROC_END);
+    if (rc != CLI_OK)
+        return rc;
+    while (n > 0u && (dev[n - 1u] == '\n' || dev[n - 1u] == '\r'))
+        n--;
+    dev[n < cap ? n : cap - 1u] = '\0';
+    rc = cleanup_push_loop(dev);
+    if (rc != CLI_OK) {
+        (void)proc_runl_quiet("losetup", "-d", dev, PROC_END);
+        return rc;
+    }
+    *looped = 1;
+    return CLI_OK;
+}
+
+/* What a rename onto the shelf left in memory, on the device. */
+static cli_status sync_path(const char *path)
+{
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    int bad;
+
+    if (fd < 0)
+        return set_error_errno(CLI_ERR_IO, "opening %s to sync it", path);
+    bad = fsync(fd) != 0;
+    (void)close(fd);
+    return bad ? set_error_errno(CLI_ERR_IO, "syncing %s", path) : CLI_OK;
+}
+
+/* One appliance on the mounted shelf: replaced when the shelf holds it and
+ * its Authenticode digest is not the release's. The new one is signed
+ * beside the old under a name the loader does not list (DESIGN Section
+ * 5.3), then the old becomes <stem>-prev.efi and the new takes its name.
+ * Without room for both the step stops, and the old one stays. */
+static cli_status put_appliance(const char *ukidir, const char *src,
+                                const mok_keys *keys)
+{
+    const char *base = util_basename(src);
+    const char *dot = strrchr(base, '.');
+    char path[MKS_PATH_MAX];
+    char tmp[MKS_PATH_MAX];
+    char prev[MKS_PATH_MAX];
+    uint8_t want[32];
+    uint8_t have[32];
+    void *buf = NULL;
+    size_t n = 0;
+    cli_status rc;
+
+    if (snprintf(path, sizeof path, "%s/%s", ukidir, base) >=
+            (int)sizeof path ||
+        snprintf(tmp, sizeof tmp, "%s/.%s.new", ukidir, base) >=
+            (int)sizeof tmp ||
+        snprintf(prev, sizeof prev, "%s/%.*s-prev.efi", ukidir,
+                 (int)(dot != NULL ? dot - base : (ptrdiff_t)strlen(base)),
+                 base) >= (int)sizeof prev)
+        return set_error(CLI_ERR_RANGE, "the shelf's path for %s is too long",
+                         base);
+    if (!util_is_file(path)) {
+        log_info("p3: no /uki/%s on the shelf; not added", base);
+        return CLI_OK;
+    }
+    rc = util_read_file(src, &buf, &n, APP_MAX);
+    if (rc == CLI_OK)
+        rc = stn_image_digest(buf, n, 0, want);
+    free(buf);
+    buf = NULL;
+    if (rc == CLI_OK)
+        rc = util_read_file(path, &buf, &n, APP_MAX);
+    if (rc == CLI_OK && stn_image_digest(buf, n, 0, have) == CLI_OK &&
+        memcmp(want, have, sizeof want) == 0) {
+        free(buf);
+        log_info("p3: /uki/%s is the release's already", base);
+        return CLI_OK;
+    }
+    free(buf);
+    cli_error_clear();
+    if (rc != CLI_OK)
+        return rc;
+
+    /* Two versions back is not a rollback anyone needs, and its room is
+     * what lets the new one sit beside the old. */
+    if (util_is_file(prev) && unlink(prev) != 0)
+        return set_error_errno(CLI_ERR_IO, "removing %s", prev);
+    rc = mok_sign(keys, src, tmp);
+    if (rc == CLI_OK)
+        rc = verify_signed(keys, tmp);
+    if (rc != CLI_OK) {
+        (void)unlink(tmp);
+        return set_error(CLI_ERR_IO, "p3: the new %s did not go onto the "
+                         "shelf beside the old one (%s); the old one stays. "
+                         "Free space on p3, or run with --keep-appliance",
+                         base, cli_error_msg());
+    }
+    if (rename(path, prev) != 0) {
+        (void)unlink(tmp);
+        return set_error_errno(CLI_ERR_IO, "keeping the old %s", base);
+    }
+    if (rename(tmp, path) != 0)
+        return set_error_errno(CLI_ERR_IO, "putting the new %s in place "
+                               "(the old one is %s)", base, prev);
+    rc = sync_path(path);
+    if (rc == CLI_OK)
+        rc = sync_path(ukidir);
+    if (rc == CLI_OK)
+        rc = util_read_file(path, &buf, &n, APP_MAX);
+    if (rc == CLI_OK && (stn_image_digest(buf, n, 0, have) != CLI_OK ||
+                         memcmp(want, have, sizeof want) != 0))
+        rc = set_error(CLI_ERR_IO, "/uki/%s did not read back as it was "
+                       "written", base);
+    free(buf);
+    if (rc == CLI_OK)
+        rc = verify_signed(keys, path);
+    if (rc == CLI_OK)
+        log_info("p3: /uki/%s signed, written and read back; the old one is "
+                 "/uki/%s", base, util_basename(prev));
+    return rc;
+}
+
+/* The appliance step: the shelf opened (through its OS's mapping when it
+ * holds one), mounted under workdir, each appliance put, and everything
+ * closed again in reverse. */
+static cli_status do_appliance(upd_ctx *c, const cli_args *a,
+                               const mok_keys *keys, const char *workdir)
+{
+    char part[MKS_PATH_MAX];
+    char mapper[64];
+    char dev[MKS_PATH_MAX];
+    char mnt[MKS_PATH_MAX];
+    char ukidir[MKS_PATH_MAX];
+    int looped = 0;
+    int mapped = 0;
+    size_t i;
+    cli_status rc = CLI_OK;
+    cli_status rc2;
+
+    if (c->shelf_dev[0] != '\0') {
+        (void)snprintf(dev, sizeof dev, "%s", c->shelf_dev);
+    } else {
+        if (!c->have_pass) {
+            rc = pass_unlock(&c->pass, cli_value(a, "passphrase-file", NULL),
+                             "passphrase for the shelf: ");
+            if (rc != CLI_OK)
+                return rc;
+            c->have_pass = 1;
+        }
+        rc = shelf_part_dev(c, part, sizeof part, &looped);
+        if (rc != CLI_OK)
+            return rc;
+        (void)snprintf(mapper, sizeof mapper, "falcon-update-p3-%d",
+                       (int)getpid());
+        rc = proc_input_l(c->pass.buf, c->pass.len, "cryptsetup", "open",
+                          part, mapper, "-", PROC_END);
+        if (rc == CLI_OK) {
+            rc = cleanup_push_crypt(mapper);
+            if (rc != CLI_OK)
+                (void)proc_runl_quiet("cryptsetup", "close", mapper,
+                                      PROC_END);
+        }
+        if (rc != CLI_OK) {
+            if (looped)
+                (void)cleanup_pop();
+            return rc;
+        }
+        mapped = 1;
+        (void)snprintf(dev, sizeof dev, "/dev/mapper/%s", mapper);
+    }
+
+    if (snprintf(mnt, sizeof mnt, "%s/p3", workdir) >= (int)sizeof mnt)
+        rc = set_error(CLI_ERR_RANGE, "the working directory is too long");
+    else if (mkdir(mnt, 0700) != 0)
+        rc = set_error_errno(CLI_ERR_IO, "a mount point for the shelf");
+    if (rc == CLI_OK)
+        rc = proc_runl_quiet("mount", dev, mnt, PROC_END);
+    if (rc == CLI_OK) {
+        rc = cleanup_push_mount(mnt);
+        if (rc != CLI_OK)
+            (void)proc_runl_quiet("umount", mnt, PROC_END);
+        else {
+            if (snprintf(ukidir, sizeof ukidir, "%s/%s", mnt,
+                         MKS_P3_UKI_DIR) >= (int)sizeof ukidir)
+                rc = set_error(CLI_ERR_RANGE, "the mount point is too long");
+            for (i = 0; i < 2u && rc == CLI_OK; i++)
+                if (c->app_src[i][0] != '\0')
+                    rc = put_appliance(ukidir, c->app_src[i], keys);
+            rc2 = cleanup_pop();          /* umount */
+            if (rc == CLI_OK)
+                rc = rc2;
+        }
+    }
+    (void)rmdir(mnt);
+    if (mapped) {
+        rc2 = cleanup_pop();              /* close */
+        if (rc == CLI_OK)
+            rc = rc2;
+    }
+    if (looped) {
+        rc2 = cleanup_pop();              /* losetup -d */
+        if (rc == CLI_OK)
+            rc = rc2;
+    }
+    return rc;
+}
+
+/* ---- --replace-shim ---- */
+
+/* One chain's shim and MokManager from dir. The loader stays under its
+ * name, so a shim that starts another name is refused. */
+static cli_status plan_shim(upd_ctx *c, const char *dir, const char *arch,
+                            const char *esp_dir, const char *name,
+                            const char *loader, const char *what,
+                            uint64_t off, uint64_t len)
+{
+    char next[SHIM_NEXT_STAGE_MAX];
+    cli_status rc;
+    upd_shim *s = &c->shim[c->n_shims];
+
+    rc = shim_find(dir, arch, s->src, sizeof s->src);
+    if (rc == CLI_OK)
+        rc = shim_next_stage_name(s->src, next, sizeof next);
+    if (rc == CLI_OK && strcasecmp(next, loader) != 0)
+        rc = set_error(CLI_ERR_INVALID, "%s starts %s, and the loader is %s; "
+                       "a shim that starts another name is a new install",
+                       s->src, next, loader);
+    if (rc == CLI_OK)
+        rc = shim_mokmanager_name(s->src, s->mm_name, sizeof s->mm_name);
+    if (rc == CLI_OK)
+        rc = shim_find_mokmanager(s->src, arch, s->mm_name, s->mm_src,
+                                  sizeof s->mm_src);
+    if (rc != CLI_OK)
+        return rc;
+    s->dir = esp_dir;
+    s->name = name;
+    s->what = what;
+    s->off = off;
+    s->len = len;
+    c->n_shims++;
+    return CLI_OK;
+}
+
+/* Every chain the disk has: a stick's x86-64 and AArch64 shims on p1, or
+ * a station's in \EFI\falcon. An AArch64 chain dir has no shim for is left
+ * as it is, and update says so. */
+static cli_status plan_shims(upd_ctx *c, const char *dir)
+{
+    cli_status rc;
+
+    if (c->p.kind == UPD_STICK) {
+        if (!c->p.uefi_stick)
+            return set_error(CLI_ERR_INVALID, "--replace-shim: this stick "
+                             "has no UEFI chain");
+        rc = plan_shim(c, dir, "x64", MKS_ESP_BOOT_DIR, MKS_ESP_SHIM_NAME,
+                       c->stick_name, "shim", c->boot_off, c->boot_len);
+        if (rc != CLI_OK || !c->stick_aa64)
+            return rc;
+        rc = plan_shim(c, dir, "aa64", MKS_ESP_BOOT_DIR,
+                       MKS_ESP_SHIM_NAME_AA64, c->stick_name_aa64,
+                       "shim-aa64", c->boot_off, c->boot_len);
+        if (rc != CLI_OK) {
+            log_warn("--replace-shim: %s; the AArch64 shim stays",
+                     cli_error_msg());
+            cli_error_clear();
+        }
+        return CLI_OK;
+    }
+    if (!c->p.uefi_station || !c->f.station_shim)
+        return set_error(CLI_ERR_INVALID, "--replace-shim: this station has "
+                         "no shim");
+    return plan_shim(c, dir, stn_n()->low, STN_ESP_DIR, stn_n()->shim,
+                     c->station_name, "shim", c->esp_off, c->esp_len);
+}
+
+/* One file onto the FAT volume, the old one saved first when there is
+ * one, then read back. Shim and MokManager carry their own signatures
+ * (DESIGN Section 4). */
+static cli_status put_signed_file(upd_ctx *c, const cli_args *a,
+                                  uint64_t off, uint64_t len,
+                                  const char *esp_dir, const char *name,
+                                  const char *src, const char *what)
+{
+    char path[MKS_PATH_MAX];
+    char label[96];
+    char backup[MKS_PATH_MAX] = "";
+    uint8_t *old = NULL;
+    uint8_t *back = NULL;
+    void *mine = NULL;
+    size_t old_n = 0;
+    size_t back_n = 0;
+    size_t mine_n = 0;
+    cli_status rc;
+
+    (void)snprintf(path, sizeof path, "/%s/%s", esp_dir, name);
+    (void)snprintf(label, sizeof label, "%s.efi", what);
+    if (has_file(c, off, len, path)) {
+        rc = backup_name(c, a, label, backup, sizeof backup);
+        if (rc == CLI_OK)
+            rc = read_file(c, off, len, path, &old, &old_n);
+        if (rc == CLI_OK)
+            rc = util_write_file(backup, old, old_n, 0644);
+        free(old);
+        if (rc != CLI_OK)
+            return rc;
+    }
+    cli_error_clear();
+    rc = stn_mtools_put(c->d.path, off, src, path + 1);
+    if (rc == CLI_OK)
+        rc = util_read_file(src, &mine, &mine_n, FILE_MAX);
+    if (rc == CLI_OK)
+        rc = read_file(c, off, len, path, &back, &back_n);
+    if (rc == CLI_OK && (back == NULL || mine == NULL || back_n != mine_n ||
+                         memcmp(back, mine, mine_n) != 0))
+        rc = set_error(CLI_ERR_IO, "%s did not read back as it was written",
+                       path);
+    free(back);
+    free(mine);
+    if (rc == CLI_OK)
+        log_info("UEFI: %s written from %s and read back%s%s", path, src,
+                 backup[0] != '\0' ? "; the old one is " : "", backup);
+    return rc;
+}
+
+static cli_status do_shims(upd_ctx *c, const cli_args *a)
+{
+    char mm_what[64];
+    size_t i;
+    cli_status rc = CLI_OK;
+
+    for (i = 0; i < c->n_shims && rc == CLI_OK; i++) {
+        (void)snprintf(mm_what, sizeof mm_what, "%s-mm", c->shim[i].what);
+        rc = put_signed_file(c, a, c->shim[i].off, c->shim[i].len,
+                             c->shim[i].dir, c->shim[i].name, c->shim[i].src,
+                             c->shim[i].what);
+        if (rc == CLI_OK)
+            rc = put_signed_file(c, a, c->shim[i].off, c->shim[i].len,
+                                 c->shim[i].dir, c->shim[i].mm_name,
+                                 c->shim[i].mm_src, mm_what);
+    }
+    return rc;
+}
+
 /* ---- the command ---- */
 
 /* dir/name as the ESP is named to a person, \EFI\BOOT\grubx64.efi. */
@@ -786,13 +1233,34 @@ static void describe(const upd_ctx *c)
     if (p->totp)
         log_info("  reseal: the TOTP seed, to the new loader; a new secret "
                  "for the authenticator");
+    {
+        size_t i;
+
+        for (i = 0; i < 2u; i++)
+            if (c->app_src[i][0] != '\0')
+                log_info("  write: p%u /uki/%s from %s, signed with the "
+                         "stick's MOK, where the shelf holds it and it is "
+                         "not the release's; the old one kept as its "
+                         "-prev.efi", c->r.parts[c->f.shelf].number,
+                         util_basename(c->app_src[i]), c->app_src[i]);
+        for (i = 0; i < c->n_shims; i++)
+            log_info("  write: partition %u %s and %s from %s, the old "
+                     "ones saved first; a firmware whose SBAT level revokes "
+                     "this shim will not boot it",
+                     c->r.parts[p->kind == UPD_STICK ? c->f.boot
+                                                     : c->f.esp_boot].number,
+                     dos_path(c->shim[i].dir, c->shim[i].name, path,
+                              sizeof path),
+                     c->shim[i].mm_name, c->shim[i].src);
+    }
     if (p->kind == UPD_STICK)
-        log_info("  keep: every record, the library, the shelf, shim, "
-                 "MokManager, the certificate, the other partitions");
+        log_info("  keep: every record, the library, the rest of the shelf, "
+                 "%sthe certificate, the other partitions",
+                 c->n_shims != 0u ? "" : "shim, MokManager, ");
     else
-        log_info("  keep: every record, STATION.INI, /uki, shim, MokManager, "
-                 "the certificate, the firmware's boot entries, the other "
-                 "partitions");
+        log_info("  keep: every record, STATION.INI, /uki, %sthe "
+                 "certificate, the firmware's boot entries, the other "
+                 "partitions", c->n_shims != 0u ? "" : "shim, MokManager, ");
     if (p->bios)
         log_info("  clear: the next-boot marker");
 }
@@ -926,13 +1394,18 @@ static cli_status update_run_arch(const cli_args *a)
     if (c.p.kind == UPD_REFUSE)
         return set_error(CLI_ERR_INVALID, "%s: %s; nothing written",
                          c.d.path, c.p.why);
+    rc = plan_appliance(&c, a);
+    if (rc == CLI_OK && cli_value(a, "replace-shim", NULL) != NULL)
+        rc = plan_shims(&c, cli_value(a, "replace-shim", NULL));
+    if (rc != CLI_OK)
+        return rc;
     describe(&c);
     rc = writable(&c);
     if (rc != CLI_OK)
         return rc;
     if (dry_run) {
         /* mkstick bios's dry run says it for itself. */
-        if (c.p.uefi_stick || c.p.uefi_station) {
+        if (c.p.uefi_stick || c.p.uefi_station || c.appliance) {
             rc = open_key(&c, a, &sk, &keys, 1);
             shelf_key_close(&sk);
             if (rc != CLI_OK)
@@ -947,12 +1420,15 @@ static cli_status update_run_arch(const cli_args *a)
     if (!cli_flag(a, "yes") && !confirm())
         return set_error(CLI_ERR_USAGE, "not confirmed; nothing written");
 
-    if (c.p.uefi_stick || c.p.uefi_station) {
+    if (c.p.uefi_stick || c.p.uefi_station || c.appliance) {
         rc = open_key(&c, a, &sk, &keys, 0);
-        if (rc != CLI_OK)
+        if (rc != CLI_OK) {
+            pass_wipe(&c.pass);
             return rc;
+        }
         if (mkdtemp(workdir) == NULL) {
             shelf_key_close(&sk);
+            pass_wipe(&c.pass);
             return set_error_errno(CLI_ERR_IO, "a working directory");
         }
     }
@@ -983,8 +1459,13 @@ static cli_status update_run_arch(const cli_args *a)
     }
     if (rc == CLI_OK && c.p.uefi_station && c.p.jump != STN_JUMP_NONE)
         rc = do_jump(&c, a, &keys, from, workdir);
+    if (rc == CLI_OK && c.n_shims != 0u)
+        rc = do_shims(&c, a);
+    if (rc == CLI_OK && c.appliance)
+        rc = do_appliance(&c, a, &keys, workdir);
     shelf_key_close(&sk);
-    if (c.p.uefi_stick || c.p.uefi_station)
+    pass_wipe(&c.pass);
+    if (c.p.uefi_stick || c.p.uefi_station || c.appliance)
         (void)rmdir(workdir);
     if (rc == CLI_OK && c.p.uefi_station && c.p.jump != STN_JUMP_NONE)
         rc = jump_entry(&c);
@@ -1039,6 +1520,15 @@ static const cli_opt update_opts[] = {
     { "shim", CLI_OPT_VALUE, 0, "<dir>",
       "shimaa64.efi and its MokManager, for a stick that gains the AArch64 "
       "chain (default " DEFAULT_SHIM ")" },
+    { "replace-shim", CLI_OPT_VALUE, 0, "<dir>",
+      "replace shim and MokManager with the ones in <dir>" },
+    { "appliance", CLI_OPT_VALUE, 0, "<file>",
+      "the signing appliance for a stick's p3 (default " DEFAULT_APPLIANCE
+      ")" },
+    { "appliance-aa64", CLI_OPT_VALUE, 0, "<file>",
+      "the AArch64 appliance (default " DEFAULT_APPLIANCE_AA64 ")" },
+    { "keep-appliance", CLI_OPT_FLAG, 0, NULL,
+      "leave a stick's signing appliance as it is" },
     { "backup-dir", CLI_OPT_VALUE, 0, "<dir>",
       "where what is replaced is saved (default .)" },
     { "passphrase-file", CLI_OPT_VALUE, 0, "<file>",
@@ -1085,9 +1575,15 @@ const cli_cmd mks_cmd_update = {
     "         again (station totp reseal) after the next boot.\n"
     "  TOTP   a station with [totp] is resealed to the new loader and\n"
     "         prints a new secret; replace the authenticator's entry.\n"
+    "  p3     a stick's signing appliance in /uki, where the shelf holds it\n"
+    "         and it is not the release's: signed with the MOK, the old one\n"
+    "         kept as <name>-prev.efi (--keep-appliance leaves it).\n"
+    "  shim   with --replace-shim <dir>, shim and MokManager from <dir>,\n"
+    "         the old ones saved first. A shim that starts another loader\n"
+    "         name is refused.\n"
     "\n"
-    "It keeps every record, STATION.INI, /uki, shim, MokManager, the\n"
-    "certificate and the firmware's boot entries, and clears the next-boot\n"
-    "marker.\n",
+    "It keeps every record, STATION.INI, the rest of /uki, shim and\n"
+    "MokManager (unless --replace-shim), the certificate and the\n"
+    "firmware's boot entries, and clears the next-boot marker.\n",
     update_run
 };
