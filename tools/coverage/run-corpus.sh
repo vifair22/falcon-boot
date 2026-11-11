@@ -23,8 +23,10 @@
 #                             validation off, is run on request, since a
 #                             state is a full pass over the corpus; `bios`,
 #                             `bios32` and `bios32-sse2` are the SeaBIOS
-#                             columns and are not among them either, so
-#                             they are asked for
+#                             columns, and `bios-usb` and `bios-usb-late`
+#                             the Windows rows with the stick on USB; they
+#                             are not among them either, so they are asked
+#                             for
 #                             by name; so are `a64-off a64-ms a64-own`,
 #                             the AArch64 columns, emulated and slow)
 #   --routes "dnd chain blessed"  which routes (default all three)
@@ -162,6 +164,14 @@ while IFS=$'\t' read -r id tier family sha file source arch; do
             if [[ "$arch" == i686 && "$st" != bios* ]]; then
                 mkdir -p "$out"
                 printf 'N/A\ta 32-bit ISO; the UEFI loader is x86-64\t0\n' \
+                    > "$out/result"
+                continue
+            fi
+            # The USB columns are for Windows' routes, which need Windows to
+            # find the stick on USB once falcon has handed over.
+            if [[ "$st" == bios-usb* && "$family" != windows ]]; then
+                mkdir -p "$out"
+                printf 'N/A\tthe USB columns run the Windows rows\t0\n' \
                     > "$out/result"
                 continue
             fi

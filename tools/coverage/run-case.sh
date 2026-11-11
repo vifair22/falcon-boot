@@ -49,7 +49,8 @@
 # and ERROR for a harness problem (QEMU would not start, the menu never came).
 #
 # Usage: tools/coverage/run-case.sh STICK STATE ROUTE OUTDIR [TIMEOUT]
-#   STATE    off | ms | own | moksb | bios | bios32 | bios32-sse2 | a64-off |
+#   STATE    off | ms | own | moksb | bios | bios32 | bios32-sse2 | bios-usb |
+#            bios-usb-late | a64-off |
 #            a64-ms | a64-own   (tools/coverage/states.sh)
 #   ROUTE    dnd      Enter on the image row: whatever the loader does by
 #                     default with an unblessed image
@@ -164,6 +165,14 @@ if [[ "$STATE_BIOS" -eq 1 ]]; then
     # Windows Setup probe judges by what is read from it. The first IDE
     # disk, so the BIOS boots it as 0x80.
     DRIVES=(-drive "id=stick,format=raw,file=$STICK,snapshot=on")
+    # The USB columns: the stick on EHCI, which SeaBIOS boots and every
+    # Windows from XP drives inbox. Its device has an id so the late
+    # column can take it away and put it back.
+    if [[ "$STATE_USB" -eq 1 ]]; then
+        DRIVES=(-device usb-ehci,id=ehci
+                -drive "if=none,id=stick,format=raw,file=$STICK,snapshot=on"
+                -device usb-storage,bus=ehci.0,drive=stick,id=st,bootindex=0)
+    fi
 fi
 # AArch64: virt, emulated, so every wait is SCALE times as long. The stick
 # is USB storage on xhci, which every arm64 OS and WinPE drive inbox; the
@@ -535,6 +544,23 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
     if grep -q -E "$gave_up" <<<"$after"; then
         finish FAIL "initramfs gave up: $(grep -m1 -E "$gave_up" <<<"$after" | sed 's/^[[:space:]]*//' | cut -c1-100)"
     fi
+    # bios-usb-late: the stick taken away once WinPE is in memory, which is
+    # when its reads stop after the first 100 MiB, so that it is gone when
+    # winjump looks for it (DESIGN 6.3).
+    if [[ "$STATE_LATE" -eq 1 && -z "${unplugged:-}" ]]; then
+        late_now=$(stick_read)
+        late_now=${late_now:-0}
+        if (( late_now > 100 * 1048576 )) && [[ "$late_now" == "${late_prev:-}" ]]; then
+            late_flat=$(( ${late_flat:-0} + 1 ))
+        else
+            late_flat=0
+        fi
+        late_prev=$late_now
+        if (( late_flat >= 3 )); then
+            echo "device_del st" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+            unplugged=$now
+        fi
+    fi
     if [[ -z "$setup_probe" && -z "$media_base" ]] && (( now >= next_setup )); then
         next_setup=$(( now + SETUP_EVERY ))
         MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh setup "$OUTDIR" \
@@ -542,6 +568,20 @@ while (( $(date +%s) - T1 < TIMEOUT )); do
         if [[ -f "$OUTDIR/setup.ppm" &&
               "$(screen_kind "$OUTDIR/setup.ppm")" == 'Windows Setup' ]]; then
             setup_probe=1
+            # The late column: Setup came up without the stick; it comes
+            # back now, and winjump's watch has a few seconds to attach the
+            # ISO before the read below.
+            if [[ "$STATE_LATE" -eq 1 ]]; then
+                [[ -n "${unplugged:-}" ]] ||
+                    finish ERROR "Setup came up before the stick was taken away"
+                sleep 15
+                echo "drive_add 0 if=none,id=stick,format=raw,file=$STICK,snapshot=on" |
+                    socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+                sleep 1
+                echo "device_add usb-storage,bus=ehci.0,drive=stick,id=st" |
+                    socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
+                sleep 20
+            fi
             echo "sendkey shift-f10" | socat - UNIX-CONNECT:"$MON" >/dev/null 2>&1 || true
             sleep 5
             media_base=$(stick_read)
