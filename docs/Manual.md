@@ -4124,7 +4124,44 @@ version. The overlay's daily bumper polls that file and opens the bump
 merge request, its Manifest made from those tarballs. Machines install the
 binary package the binhost builds from it.
 
-### 14.4 Building a release
+### 14.4 What stays compatible
+
+From 1.0 on, a release does not break what an earlier release of the same
+major version made or wrote. Within 1.x:
+
+| what | promise |
+|---|---|
+| a stick | Every loader boots a stick any earlier 1.x made: its partitions, their records and install ID, the shelf (Section 5, DESIGN 5.3), p2's `falcon/` directory and what is blessed there. `update` brings it to the release in place (10.7); no stick has to be made again. |
+| blessed media and the MOK | What an earlier 1.x blessed boots without blessing again, and the MOK enrolled stays the one every later 1.x signs with. No release asks for a new enrollment. |
+| a station | An installed station keeps booting, and `update` or the station bundle (7.8) brings it to the release. Every `STATION.INI` that parses keeps parsing with the same meaning. |
+| `mkstick` and `falcon-boot-sign` | Every command and flag keeps its name and meaning, and its exit status (0 done, 1 not). `ident`'s tab-separated columns (10.4) stay as they are. |
+| the release | The file names in this section, the tarball's paths under `usr/` (14.2), `SHA256SUMS`, the `falcon-boot-bin` package and its repositories (14.3). |
+
+A release may add: commands, flags, `STATION.INI` keys, route codes,
+families, rows, files in the tarball. Something added in 1.y is new to a
+1.x before it: a `STATION.INI` using a key from 1.y is refused there (the
+parser is strict, Section 8), so update a station before writing a newer
+key into its file.
+
+Outside the promise, and free to change in any release:
+
+- the screens' wording and look, the serial transcript, and every other
+  message's wording;
+- falcon jump's PC Card boot (`PCC`, station-legacy's too), which is
+  experimental;
+- the test rig's options (`--tpm-socket`, `--event-log`, `--saved-log`;
+  Section 13.4), the make targets, the harness and the build;
+- `docs/DESIGN.md`'s internals: module names, layouts in memory, what a
+  route does on the way, so long as what it boots does not change;
+- anything not released.
+
+A change that would break the promise waits for 2.0. The one exception is
+a security fix that cannot keep it, such as a revoked shim or a raised
+SBAT level, which the release notes call out with the step to take.
+Release notes also list anything 1.0 broke that 0.x made; none is
+expected.
+
+### 14.5 Building a release
 
     tools/coverage/harness.sh make release \
         MEMTEST=<memtest86+ i586> MEMTEST_EFI=<memtest86+ x86-64>
