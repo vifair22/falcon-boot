@@ -50,6 +50,13 @@
 #        (falcon-bios/src/win/win.c) that Windows 8 and later x86 need,
 #        which bios32 fails.
 #
+#   bios-usb, bios-usb-late
+#        bios with the stick on EHCI USB storage instead of IDE, for the
+#        Windows rows: their routes need Windows to find the stick on USB,
+#        which IDE never tests. bios-usb-late takes the stick away once
+#        WinPE is in memory and puts it back after Setup is up, the
+#        arrival winjump's watch exists for (DESIGN 6.3).
+#
 #   a64-off, a64-ms, a64-own
 #        off, ms and own on an AArch64 machine: QEMU's virt under AAVMF,
 #        emulated (TCG), the stick on xhci as USB storage (WinPE has no
@@ -164,10 +171,13 @@ states_own_vars() {   # states_own_vars BLANK OUT
 
 # Sets STATE_CODE and STATE_SECURE (1 when the firmware needs SMM and a
 # secure flash), STATE_BIOS (1 for the SeaBIOS columns, which have neither),
+# STATE_USB and STATE_LATE (the stick on USB, and taken away and back),
 # STATE_CPU (the QEMU CPU model), STATE_ARCH (x64 or aa64), and copies the
 # state's varstore to DEST, which the run may then write to freely.
 state_firmware() {   # state_firmware STATE DEST
     STATE_BIOS=0
+    STATE_USB=0
+    STATE_LATE=0
     STATE_CPU=host
     STATE_ARCH=x64
     case "$1" in
@@ -195,10 +205,12 @@ state_firmware() {   # state_firmware STATE DEST
             ;;
         esac
         ;;
-    bios|bios32|bios32-sse2)
+    bios|bios32|bios32-sse2|bios-usb|bios-usb-late)
         STATE_CODE=
         STATE_SECURE=0
         STATE_BIOS=1
+        [[ "$1" == bios-usb* ]] && STATE_USB=1
+        [[ "$1" == bios-usb-late ]] && STATE_LATE=1
         [[ "$1" == bios32 ]] && STATE_CPU=pentium3
         [[ "$1" == bios32-sse2 ]] && STATE_CPU=qemu64,-lm,+nx
         return 0
@@ -232,7 +244,8 @@ state_firmware() {   # state_firmware STATE DEST
         ;;
     *)
         echo "ERROR: unknown state $1 (off, ms, own, moksb, bios, bios32," \
-             "bios32-sse2, a64-off, a64-ms, a64-own)" >&2
+             "bios32-sse2, bios-usb, bios-usb-late, a64-off, a64-ms," \
+             "a64-own)" >&2
         return 1
         ;;
     esac

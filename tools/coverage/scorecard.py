@@ -50,11 +50,16 @@ STATES = [('off', 'SB off'), ('ms', 'SB on, MS CA'), ('own', 'SB on, own keys'),
           # That i686 with SSE2, PAE and NX: the same ISOs, on the processor
           # Windows 8 and later x86 ask for (falcon-bios/src/win/win.c).
           ('bios32-sse2', 'BIOS, i686 SSE2'),
+          # The Windows rows with the stick on USB, and taken away and back
+          # after Setup is up (tools/coverage/states.sh); shown once a case
+          # has run.
+          ('bios-usb', 'BIOS, USB stick'),
+          ('bios-usb-late', 'BIOS, USB stick late'),
           # The AArch64 machine (tools/coverage/states.sh): the arm64 ISOs
           # and nothing else, run on request. Shown once a case has run.
           ('a64-off', 'AArch64 SB off'), ('a64-ms', 'AArch64 SB on, MS CA'),
           ('a64-own', 'AArch64 SB on, own keys')]
-ON_REQUEST = ('a64-off', 'a64-ms', 'a64-own')
+ON_REQUEST = ('bios-usb', 'bios-usb-late', 'a64-off', 'a64-ms', 'a64-own')
 ROUTE_ORDER = ['dnd', 'chain', 'blessed']
 ROUTE_NAMES = {'dnd': 'drop', 'chain': 'chain', 'blessed': 'bless'}
 # Headline: Secure Boot off, and Secure Boot on where db trusts the Microsoft
@@ -203,7 +208,7 @@ def main():
                     fails.append((r['id'], st, rt, v, res['reason']))
             applies[st] = not verdicts or any(v != 'N/A' for v in verdicts)
             if st in ('off', 'moksb', 'bios', 'bios32', 'bios32-sse2',
-                      'a64-off'):
+                      'bios-usb', 'bios-usb-late', 'a64-off'):
                 # SB off, validation off and the BIOS columns headline the
                 # drop route: it is the product's default, and the headline
                 # is what it does.
@@ -225,7 +230,9 @@ def main():
     w('')
     w('## Summary')
     w('')
-    a64_names = {'a64-off': 'AArch64 SB off, drop', 'a64-ms': 'AArch64 SB on, MS CA',
+    a64_names = {'bios-usb': 'BIOS, USB stick, drop',
+                 'bios-usb-late': 'BIOS, USB stick late, drop',
+                 'a64-off': 'AArch64 SB off, drop', 'a64-ms': 'AArch64 SB on, MS CA',
                  'a64-own': 'AArch64 SB on, own keys'}
     w('| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | '
       'SB on, own keys | SB on, validation off, drop | BIOS, drop | '
