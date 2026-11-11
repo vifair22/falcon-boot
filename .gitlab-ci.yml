@@ -208,6 +208,7 @@ rigs:
           - test-station-bios
           - test-station-fixtures
           - test-station-legacy
+          - test-station-bundle
           - test-cfstation
           - test-jump
           - test-aa64
@@ -255,6 +256,33 @@ rigs:
     expire_in: 2 weeks
     paths:
       - rig.log
+
+# What a tag would publish, built and used before the tag (Manual 14.5):
+# make release as the release job runs it, the Arch packages built from it
+# with no key (publish-arch.sh NO_SIGN=1; nothing is signed or pushed), and
+# the x86-64 tarball installed in the harness, whose mkstick, naming no file
+# of the build, makes a stick that boots under OVMF with Secure Boot and
+# under SeaBIOS (tools/release/prove.sh).
+release-proof:
+  extends: .release-gate
+  stage: rigs
+  needs: [build]
+  variables:
+    FALCON_FIXTURES: /srv/falcon/fixtures
+  script:
+    - *shims
+    - tools/coverage/harness.sh make release MEMTEST=/fixtures/memtest/mt86p_810_i586 MEMTEST_EFI=/fixtures/memtest/mt86p_810_x86_64
+    - NO_SIGN=1 tools/release/publish-arch.sh "$FALCON_BUILD_DIR/release"
+    - tools/coverage/harness.sh make mok-test sign test-uki payload cli bios station
+    - tools/coverage/harness.sh tools/release/prove.sh build/release | tee prove.log
+    - |
+      if grep -E '^(FAIL|SKIP) ' prove.log; then exit 1; fi
+      [[ $(grep -cE '^PASS ' prove.log) -ge 5 ]] || { echo "FAIL: the proof did not run every step"; exit 1; }
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    paths:
+      - prove.log
 
 # The corpus and its verdict, one job. Every Secure Boot state runs in it:
 # the loaders are built and restaged into the case sticks once, and
