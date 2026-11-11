@@ -345,10 +345,11 @@ case_menu() {
     station_image ""
     NEXT= NO_WIN_ENTRY=0 boot "$fw"
     wait_for "$MENU_UP" 90 || why="no menu"
-    sleep 1
-    [[ -z "$why" ]] && { has "Personal OS (encrypted)" || why="no Personal OS row"; }
-    [[ -z "$why" ]] && { has "Windows Boot Manager" || why="no firmware entry row"; }
-    [[ -z "$why" ]] && { has "$MEMTEST_LABEL" || why="no memtest row"; }
+    # The rows come as the menu's probe fills them, a little later under
+    # Secure Boot, so each is waited for rather than looked for once.
+    [[ -z "$why" ]] && { wait_for "Personal OS (encrypted)" 15 || why="no Personal OS row"; }
+    [[ -z "$why" ]] && { wait_for "Windows Boot Manager" 15 || why="no firmware entry row"; }
+    [[ -z "$why" ]] && { wait_for "$MEMTEST_LABEL" 15 || why="no memtest row"; }
     [[ -z "$why" ]] && has "(disk $WIN_SHORT" && why="an ESP row for a Windows its entry names"
     [[ -z "$why" ]] && has "Booting in" && why="a countdown with no STATION.INI"
     if [[ -z "$why" ]]; then
