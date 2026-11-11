@@ -854,15 +854,19 @@ static cli_status sync_path(const char *path)
     return bad ? set_error_errno(CLI_ERR_IO, "syncing %s", path) : CLI_OK;
 }
 
-/* One appliance on the mounted shelf: replaced when the shelf holds it and
- * its Authenticode digest is not the release's. The new one is signed
- * beside the old under a name the loader does not list (DESIGN Section
- * 5.3), then the old becomes <stem>-prev.efi and the new takes its name.
- * Without room for both the step stops, and the old one stays. */
-static cli_status put_appliance(const char *ukidir, const char *src,
-                                const mok_keys *keys)
+/* The names create gives the appliances on p3, whatever --appliance's file
+ * is called: the shelf holds them under these. */
+static const char *const k_app_names[2] = { "appliance-uki.efi",
+                                            "appliance-uki-aa64.efi" };
+
+/* One appliance on the mounted shelf, /uki/<base>: replaced from src when
+ * the shelf holds it and its Authenticode digest is not src's. The new one
+ * is signed beside the old under a name the loader does not list (DESIGN
+ * Section 5.3), then the old becomes <stem>-prev.efi and the new takes its
+ * name. Without room for both the step stops, and the old one stays. */
+static cli_status put_appliance(const char *ukidir, const char *base,
+                                const char *src, const mok_keys *keys)
 {
-    const char *base = util_basename(src);
     const char *dot = strrchr(base, '.');
     char path[MKS_PATH_MAX];
     char tmp[MKS_PATH_MAX];
@@ -1009,7 +1013,8 @@ static cli_status do_appliance(upd_ctx *c, const cli_args *a,
                 rc = set_error(CLI_ERR_RANGE, "the mount point is too long");
             for (i = 0; i < 2u && rc == CLI_OK; i++)
                 if (c->app_src[i][0] != '\0')
-                    rc = put_appliance(ukidir, c->app_src[i], keys);
+                    rc = put_appliance(ukidir, k_app_names[i],
+                                       c->app_src[i], keys);
             rc2 = cleanup_pop();          /* umount */
             if (rc == CLI_OK)
                 rc = rc2;
@@ -1243,7 +1248,7 @@ static void describe(const upd_ctx *c)
                          "stick's MOK, where the shelf holds it and it is "
                          "not the release's; the old one kept as its "
                          "-prev.efi", c->r.parts[c->f.shelf].number,
-                         util_basename(c->app_src[i]), c->app_src[i]);
+                         k_app_names[i], c->app_src[i]);
         for (i = 0; i < c->n_shims; i++)
             log_info("  write: partition %u %s and %s from %s, the old "
                      "ones saved first; a firmware whose SBAT level revokes "
