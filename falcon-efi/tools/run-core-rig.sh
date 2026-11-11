@@ -116,6 +116,14 @@
 #                  then the station boots its UKI under each firmware
 #   update-refuse  `mkstick update` on a blank disk: refused, nothing
 #                  written
+#   release-stick-uefi-sb, release-stick-bios
+#                  not in the default list: tools/release/prove.sh runs them
+#                  with FALCON_RELEASE_MKSTICK naming the release's mkstick,
+#                  installed from its tarball. It makes a stick with the
+#                  rig's MOK (`create --key --cert`) and no path option, so
+#                  the loader, shim, appliance and stages all come from the
+#                  release's data directory; the stick's library ISO is on
+#                  the menu under Secure Boot, and under SeaBIOS
 #   hibernated-uefi, hibernated-bios
 #                  the station disk as a hibernated OS leaves it: its shelf
 #                  mounted read-write on this host, personal.efi copied to
@@ -1146,6 +1154,54 @@ case_update_station() { # case_update_station CASE FIRMWARE
     fi
 }
 
+# The release's stick (tools/release/prove.sh): made once by the mkstick
+# FALCON_RELEASE_MKSTICK names, with no option that names a file of the
+# build, so everything comes from its data directory.
+release_stick() {
+    local img=$R/stick-release.img log=$R/stick-release.build p2
+    [[ -f "$img" ]] && return 0
+    truncate -s 2G "$img"
+    ( umask 077; printf '%s' "$PASS" > "$R/pass" )
+    attach "$img"
+    # shellcheck disable=SC2024  # the log is ours, not root's
+    sudo "$FALCON_RELEASE_MKSTICK" --quiet create "$LOOP" --force \
+        --p1-size 300M --iso-size 128M --p3-size 320M --p4-size rest \
+        --passphrase-file "$R/pass" --uki build/test/fixture-uki.efi \
+        --key build/mok-test/falcon-test-mok.key \
+        --cert build/mok-test/falcon-test-mok.crt >"$log" 2>&1 ||
+        { rm -f "$R/pass" "$img"; detach; return 1; }
+    rm -f "$R/pass"
+    # shellcheck disable=SC2024
+    sudo "$FALCON_RELEASE_MKSTICK" --quiet bios --reserve --no-backup "$LOOP" \
+        >>"$log" 2>&1 || { rm -f "$img"; detach; return 1; }
+    p2=$(sudo "$FALCON_RELEASE_MKSTICK" ident "$LOOP" |
+         awk -F '\t' '$2 == "library" { print $1 }')
+    [[ -n "$p2" ]] || { rm -f "$img"; detach; return 1; }
+    mount_part "${LOOP}p$p2"
+    cp build/test-payload.iso "$MNT/payload-test.iso"
+    umount_part
+    detach
+}
+
+case_release_stick() { # case_release_stick CASE FIRMWARE
+    local why=
+    [[ -n "${FALCON_RELEASE_MKSTICK:-}" ]] ||
+        why="FALCON_RELEASE_MKSTICK is not set (tools/release/prove.sh sets it)"
+    [[ -z "$why" ]] && { release_stick ||
+        why="the release's mkstick did not make a stick ($R/stick-release.build)"; }
+    if [[ -z "$why" ]]; then
+        boot "$2" "$R/stick-release.img:boot"
+        wait_for payload-test.iso 120 ||
+            why="the menu never listed the library's ISO"
+        halt
+    fi
+    if [[ -z "$why" ]]; then
+        result "$1" 1 "the release's mkstick made a stick from its data directory; its menu is up"
+    else
+        result "$1" 0 "$why"
+    fi
+}
+
 case_update_refuse() { # case_update_refuse CASE
     local why= before after
     rm -f "$R/blank-upd.img"
@@ -1920,6 +1976,8 @@ for c in "${CASES[@]}"; do
     update-station-uefi-sb) case_update_station "$c" uefi-sb ;;
     update-station-bios)    case_update_station "$c" bios ;;
     update-refuse)          case_update_refuse "$c" ;;
+    release-stick-uefi-sb)  case_release_stick "$c" uefi-sb ;;
+    release-stick-bios)     case_release_stick "$c" bios ;;
     relaunch-uefi)   case_relaunch "$c" uefi ;;
     relaunch-uefi-sb) case_relaunch "$c" uefi-sb ;;
     probe-keys-uefi) case_probe_keys "$c" uefi ;;

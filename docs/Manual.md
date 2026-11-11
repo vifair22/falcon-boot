@@ -4174,3 +4174,18 @@ pipeline runs the same target with the fixture store's memtest86+, checks
 that the tag is `release_version`'s, and publishes with
 `tools/release/publish.sh`.
 
+Before that, the merge request into master proves the same files in its
+`release-proof` job: `make release` as the tag runs it, the Arch packages
+built from it with no key (`NO_SIGN=1 tools/release/publish-arch.sh
+build/release`, which checks each holds mkstick and signs and pushes
+nothing), and
+
+    tools/coverage/harness.sh tools/release/prove.sh build/release
+
+which checks `SHA256SUMS` and both tarballs' `MANIFEST`, installs the
+x86-64 tarball over the harness container's `/usr` as an install would, and
+has that mkstick, naming no file of the build, make a stick that boots
+under OVMF with Secure Boot and under SeaBIOS (`run-core-rig.sh`'s
+`release-stick` cases). The station bundle's rig, `test-station-bundle`,
+is in the same gate.
+
