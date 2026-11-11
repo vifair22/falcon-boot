@@ -27,6 +27,10 @@
 #        FALCON_ARCH_IMAGE            default archlinux:base-devel
 #        NO_DEPLOY=1                  build and sign only; the repository is
 #                                     left in the temporary directory it names
+#        NO_SIGN=1                    build only, with no key, and check each
+#                                     package holds mkstick: the merge
+#                                     request into master's proof (Manual
+#                                     14.5); implies NO_DEPLOY
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -34,8 +38,11 @@ REL=${1:?usage: publish-arch.sh RELEASE_DIR}
 VER=$(cat release_version)
 ARCHES=(x86_64 aarch64)
 IMAGE=${FALCON_ARCH_IMAGE:-archlinux:base-devel}
-KEY=${FALCON_ARCH_GPG_PRIVATE_KEY:?the signing key}
-KEYID=${FALCON_ARCH_GPG_KEY_ID:?the signing key fingerprint}
+NO_SIGN=${NO_SIGN:-0}
+if [[ $NO_SIGN != 1 ]]; then
+    KEY=${FALCON_ARCH_GPG_PRIVATE_KEY:?the signing key}
+    KEYID=${FALCON_ARCH_GPG_KEY_ID:?the signing key fingerprint}
+fi
 DL_HOST=root@172.20.0.50
 DL_PATH=/mnt/cache/appdata/airies-dl/arch/falcon
 DL_SRC=/mnt/cache/appdata/airies-dl/falcon/src
@@ -59,6 +66,27 @@ for a in "${ARCHES[@]}"; do
     sum=$(sha256sum "$REL/falcon-boot-$VER-$a.tar.gz" | cut -d' ' -f1)
     sed -i -e "s/^sha256sums_$a=.*/sha256sums_$a=($sum)/" "$OUT/work/PKGBUILD"
 done
+
+if [[ $NO_SIGN == 1 ]]; then
+    docker run --rm -v "$OUT:/o" -e OWNER="$(id -u):$(id -g)" \
+        -e ARCHES="${ARCHES[*]}" "$IMAGE" bash -euo pipefail -c '
+        useradd -m builder
+        chown -R builder /o/work
+        for a in $ARCHES; do
+            sed "s/^CARCH=.*/CARCH=\"$a\"/" /etc/makepkg.conf > /o/work/makepkg-$a.conf
+            su builder -c "cd /o/work && makepkg --config makepkg-$a.conf --nodeps --noconfirm" \
+                >/o/makepkg-$a.log 2>&1 || { cat /o/makepkg-$a.log; exit 1; }
+            p=$(ls /o/work/*-$a.pkg.tar.zst)
+            bsdtar -tf "$p" > /o/list-$a.txt
+            grep -qx "usr/bin/falcon-boot-mkstick" /o/list-$a.txt ||
+                { echo "publish-arch: $p has no usr/bin/falcon-boot-mkstick"; exit 1; }
+        done
+        chown -R "$OWNER" /o'
+    ls -l "$OUT"/work/*.pkg.tar.zst
+    rm -rf "$OUT"
+    echo "publish-arch: NO_SIGN, both packages built and hold mkstick"
+    exit 0
+fi
 
 # The key goes in and out of the build directory within this script; File
 # variables lose their trailing newline, which gpg does not mind.
