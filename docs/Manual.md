@@ -1596,7 +1596,9 @@ advice:
 With no row at all the station leaves for the firmware at once, adding
 `note: no personal OS shelf and no other boot entry was found.`
 
-**BIOS.** `STATION.INI` is read from the station partition's root. The
+**BIOS.** `STATION.INI` is read from the station partition's root, or on
+an ESP from its root, and when there is none there from the UEFI half's
+`\EFI\falcon\STATION.INI` (Section 8). The
 rows, in the order found: each encrypted shelf carrying the station's
 install ID as `Personal OS (encrypted)`, and each plaintext shelf's UKIs;
 each primary partition of an MBR disk whose boot sector names a known
@@ -1865,8 +1867,17 @@ which the machine being updated does not hold.
 
 The station's configuration (`docs/DESIGN.md` Section 12.7):
 `\EFI\falcon\STATION.INI` on the station's ESP for UEFI, `STATION.INI` in
-the station partition's root for BIOS. Optional; at most 16 KB. The
-installer writes one, and `station status` parses it as the loaders do.
+the station partition's root, or the ESP's, for BIOS. Optional; at most
+16 KB. The installer writes one for each half, and `station status` parses
+each as the loaders do.
+
+A dual-mode station keeps one file by deleting the one at the ESP's root:
+a BIOS station on an ESP with no `STATION.INI` there reads
+`\EFI\falcon\STATION.INI`, and `station status` says so. Only one file is
+read, never both. In that file a section only the UEFI half can boot (`efi`
+or `method` with nothing else) is left out on BIOS, and a `default` naming
+a row the BIOS half does not have gives it no default and no countdown,
+said once before its menu. Error lines name the file read.
 
     [general]
     default = win2k          ; a section name, or a found row's name
@@ -2926,7 +2937,7 @@ What the disk is comes from its records:
 | disk | found by | written |
 |---|---|---|
 | stick | a boot record, with a library of its install ID (and its shelf, unless made `--no-p3`) | the loader on p1, and the AArch64 loader beside it; a stick made before it had the AArch64 chain gets shimaa64, its MokManager and the loader, when `--from` and `--shim` hold them; stages 1-3 when LBA 0 holds stage 1; each appliance on an encrypted p3 that is not the release's |
-| BIOS station | a boot record naming stage 3, with `STATION.INI` | stages 1-3 (`falcon-bios-station-stage3.bin`) |
+| BIOS station | a boot record naming stage 3, with `STATION.INI` (on an ESP, its own or the UEFI half's) | stages 1-3 (`falcon-bios-station-stage3.bin`) |
 | station-legacy | the same, with any `*.MOD` on the partition | stages 1-3 (`falcon-bios-station-legacy-stage3.bin`) and the drivers |
 | UEFI station | the ESP's boot record, with a loader in `\EFI\falcon` | that loader; without shim, the jumper and its entry |
 
@@ -4024,7 +4035,7 @@ result is skipped unless `--force`. Its options:
 
 | option | default |
 |---|---|
-| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios`, `bios32`, `bios32-sse2` and the AArch64 columns `a64-off a64-ms a64-own` (virt under AAVMF, emulated, each wait `FALCON_CASE_A64_SCALE` (4) times as long) are asked for by name |
+| `--states "..."` | `off ms own`; `moksb` (Secure Boot on, validation off), `bios`, `bios32`, `bios32-sse2`, `bios-usb` and `bios-usb-late` (the Windows rows with the stick on EHCI USB, and in the late one taken away once WinPE is in memory and put back 15 s after Setup is up) and the AArch64 columns `a64-off a64-ms a64-own` (virt under AAVMF, emulated, each wait `FALCON_CASE_A64_SCALE` (4) times as long) are asked for by name |
 | `--routes "..."` | `dnd chain blessed` |
 | `--jobs N` | 3, each case taking `FALCON_CASE_MEM` (4 GiB) |
 | `--timeout S` | 300 seconds from the keypress to a verdict |
@@ -4209,4 +4220,19 @@ packages (`fetch-shims.sh`, Section 13.6) and memtest86+'s release binaries
 pipeline runs the same target with the fixture store's memtest86+, checks
 that the tag is `release_version`'s, and publishes with
 `tools/release/publish.sh`.
+
+Before that, the merge request into master proves the same files in its
+`release-proof` job: `make release` as the tag runs it, the Arch packages
+built from it with no key (`NO_SIGN=1 tools/release/publish-arch.sh
+build/release`, which checks each holds mkstick and signs and pushes
+nothing), and
+
+    tools/coverage/harness.sh tools/release/prove.sh build/release
+
+which checks `SHA256SUMS` and both tarballs' `MANIFEST`, installs the
+x86-64 tarball over the harness container's `/usr` as an install would, and
+has that mkstick, naming no file of the build, make a stick that boots
+under OVMF with Secure Boot and under SeaBIOS (`run-core-rig.sh`'s
+`release-stick` cases). The station bundle's rig, `test-station-bundle`,
+is in the same gate.
 

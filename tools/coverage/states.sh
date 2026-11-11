@@ -50,6 +50,13 @@
 #        (falcon-bios/src/win/win.c) that Windows 8 and later x86 need,
 #        which bios32 fails.
 #
+#   bios-usb, bios-usb-late
+#        bios with the stick on EHCI USB storage instead of IDE, for the
+#        Windows rows: their routes need Windows to find the stick on USB,
+#        which IDE never tests. bios-usb-late takes the stick away once
+#        WinPE is in memory and puts it back after Setup is up, the
+#        arrival winjump's watch exists for (DESIGN 6.3).
+#
 #   a64-off, a64-ms, a64-own
 #        off, ms and own on an AArch64 machine: QEMU's virt under AAVMF,
 #        emulated (TCG), the stick on xhci as USB storage (WinPE has no
@@ -77,48 +84,6 @@ SHIM_SRC_AA64=build/shim/bins/fedora-16.1-shimaa64.efi
 SHIM_DUAL_AA64=$STATES_DIR/shimaa64-dual.efi
 MOK_OWNER_GUID=605dab50-e046-4300-abb6-3dd810dd8b23
 OWN_OWNER_GUID=4f5d5a1e-7b1c-4c35-9a6e-6f616c636f6e
-
-# Appends the WIN_CERTIFICATE entries of SIGNED to the certificate table of
-# BASE, writing OUT. Both must be the same image apart from their signatures,
-# which is checked: the Authenticode hash excludes the certificate table, so
-# the entries of one are valid signatures over the other.
-pe_merge_sigs() {   # pe_merge_sigs BASE SIGNED OUT
-    python3 - "$1" "$2" "$3" <<'PY'
-import struct, sys
-
-def table(d):
-    pe = struct.unpack_from('<I', d, 0x3c)[0]
-    assert d[pe:pe+4] == b'PE\0\0', 'not a PE'
-    opt = pe + 24
-    magic = struct.unpack_from('<H', d, opt)[0]
-    assert magic == 0x20b, 'not PE32+'
-    dd = opt + 112 + 4 * 8           # data directory 4, the certificate table
-    off, size = struct.unpack_from('<II', d, dd)
-    return dd, off, size
-
-base = bytearray(open(sys.argv[1], 'rb').read())
-signed = open(sys.argv[2], 'rb').read()
-bdd, boff, bsize = table(base)
-sdd, soff, ssize = table(signed)
-assert boff and soff, 'both images must already carry a signature'
-# Same image apart from signatures: identical up to each table's start, with
-# only the checksum and directory entry allowed to differ.
-pe = struct.unpack_from('<I', base, 0x3c)[0]
-cks = pe + 24 + 64
-def mask(d, dd, off):
-    d = bytearray(d[:off])
-    d[cks:cks+4] = b'\0' * 4
-    d[dd:dd+8] = b'\0' * 8
-    return bytes(d)
-assert mask(base, bdd, boff) == mask(signed, sdd, soff), 'images differ'
-extra = signed[soff:soff+ssize]
-body = bytes(base[:boff + bsize])
-pad = (-len(body)) % 8
-out = bytearray(body + b'\0' * pad + extra)
-struct.pack_into('<II', out, bdd, boff, bsize + pad + len(extra))
-open(sys.argv[3], 'wb').write(out)
-PY
-}
 
 # Builds the own-keys material once: the db key, the varstore that trusts only
 # it (and the test MOK through shim), and the dual-signed shim.
@@ -166,14 +131,22 @@ states_prepare() {
     fi
 }
 
-# The shim SRC with the rig's db signature added beside Microsoft's, as OUT.
+# The shim SRC with the rig's db signature added beside Microsoft's, as OUT,
+# by the recipe Manual 11.1 gives a person: one sbsign, which appends. The
+# count is checked, so a signer that replaced the table instead would stop
+# here rather than leave a shim only the own-keys column can boot.
 states_dual() {   # states_dual SRC OUT
     if [[ ! -f "$2" || "$1" -nt "$2" || "$OWN_CRT" -nt "$2" ]]; then
-        local tmp=$STATES_DIR/shim-own-only.efi
-        sbsign --key "$OWN_KEY" --cert "$OWN_CRT" --output "$tmp" "$1" \
+        local before after
+        before=$(sbverify --list "$1" 2>/dev/null | grep -c '^signature')
+        sbsign --key "$OWN_KEY" --cert "$OWN_CRT" --output "$2" "$1" \
             >/dev/null 2>&1
-        pe_merge_sigs "$1" "$tmp" "$2"
-        rm -f "$tmp"
+        after=$(sbverify --list "$2" 2>/dev/null | grep -c '^signature')
+        if (( after != before + 1 )); then
+            echo "ERROR: sbsign left $after signature(s) on $2, not $((before + 1))" >&2
+            rm -f "$2"
+            return 1
+        fi
     fi
 }
 
@@ -198,10 +171,13 @@ states_own_vars() {   # states_own_vars BLANK OUT
 
 # Sets STATE_CODE and STATE_SECURE (1 when the firmware needs SMM and a
 # secure flash), STATE_BIOS (1 for the SeaBIOS columns, which have neither),
+# STATE_USB and STATE_LATE (the stick on USB, and taken away and back),
 # STATE_CPU (the QEMU CPU model), STATE_ARCH (x64 or aa64), and copies the
 # state's varstore to DEST, which the run may then write to freely.
 state_firmware() {   # state_firmware STATE DEST
     STATE_BIOS=0
+    STATE_USB=0
+    STATE_LATE=0
     STATE_CPU=host
     STATE_ARCH=x64
     case "$1" in
@@ -229,10 +205,12 @@ state_firmware() {   # state_firmware STATE DEST
             ;;
         esac
         ;;
-    bios|bios32|bios32-sse2)
+    bios|bios32|bios32-sse2|bios-usb|bios-usb-late)
         STATE_CODE=
         STATE_SECURE=0
         STATE_BIOS=1
+        [[ "$1" == bios-usb* ]] && STATE_USB=1
+        [[ "$1" == bios-usb-late ]] && STATE_LATE=1
         [[ "$1" == bios32 ]] && STATE_CPU=pentium3
         [[ "$1" == bios32-sse2 ]] && STATE_CPU=qemu64,-lm,+nx
         return 0
@@ -266,7 +244,8 @@ state_firmware() {   # state_firmware STATE DEST
         ;;
     *)
         echo "ERROR: unknown state $1 (off, ms, own, moksb, bios, bios32," \
-             "bios32-sse2, a64-off, a64-ms, a64-own)" >&2
+             "bios32-sse2, bios-usb, bios-usb-late, a64-off, a64-ms," \
+             "a64-own)" >&2
         return 1
         ;;
     esac

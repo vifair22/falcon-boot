@@ -58,6 +58,13 @@
 #             loader with another Authenticode digest, resealing from the
 #             old loader's boot log (DESIGN Section 12.14); the next boot
 #             shows the code of the secret update printed.
+#   totp-reseal  the way forward after the warning (Manual 7.6): totp's
+#             steps 1 and 2, then the other firmware moves PCR 0 and the
+#             station warns; `station totp reseal` from that boot's record
+#             prints a new secret, whose code the next boot shows;
+#             `station totp remove` deletes [totp], and the boot after
+#             shows neither a code nor a warning and still starts its
+#             default.
 #   totp-jump  the station without shim (DESIGN Section 12.2): the loader
 #             as \EFI\falcon\falconx64.efi, the jumper as
 #             \EFI\BOOT\BOOTX64.EFI, and the `falcon` entry naming it.
@@ -642,6 +649,106 @@ case_totp() {
     result "$c" "$why" "code $shown matches the seed, off the wire, gone after a handover, above the prompt; PCR 0 moved: warned"
 }
 
+# The event log and the station's record off the ESP after a boot, as
+# --event-log and --saved-log take them; sets why on a miss.
+evlog_fetch() {
+    rm -f "$R/evlog.bin" "$R/evsave.bin"
+    mcopy -i "$R/totp.img@@1M" ::/falcon-evlog.bin "$R/evlog.bin" 2>/dev/null ||
+        why="the probe saved no event log"
+    saved=()
+    if [[ -z $why ]]; then
+        mcopy -i "$R/totp.img@@1M" ::/falcon-evsave.bin "$R/evsave.bin" 2>/dev/null &&
+            saved=(--saved-log "$R/evsave.bin")
+    fi
+}
+
+case_totp_reseal() {
+    local c=$1 fw=$2 tpm=$3 why= ver= out= secret= shown= want= base= chk=
+    local saved=() owner=()
+    why=$(fw_missing "$fw")
+    [[ -n $why ]] && { skip "$c" "$why"; return; }
+    [[ -f "$STATION" ]] || { skip "$c" "$STATION missing (make test-station)"; return; }
+    [[ -x "$MKSTICK" ]] || { skip "$c" "$MKSTICK missing (make cli)"; return; }
+    command -v python3 >/dev/null || { skip "$c" "python3 is not installed"; return; }
+    command -v swtpm_setup >/dev/null || { skip "$c" "swtpm_setup is not installed"; return; }
+
+    totp_enrolled || return 0
+    base=$(date -u -d "${RTC_BASE/T/ }" +%s)
+
+    # A. the other firmware: PCR 0 moved, the station warns
+    if [[ -z $why ]]; then
+        OTHER_FW=1 boot "$fw" "$tpm" "$R/totp.img"
+        wait_for "FALCON-TPM-PROBE-DONE" 120 || why="the warning boot did not reach the probe"
+        halt
+        log_text "$R/serial.log" > "$R/$c-a.log"
+        [[ -z $why ]] && { grep -aqF "The TPM did not release the code:" "$R/$c-a.log" ||
+            why="no warning after PCR 0 moved"; }
+    fi
+    [[ -z $why ]] && evlog_fetch
+
+    # B. the reseal, from that boot's record
+    if [[ -z $why ]]; then
+        SWTPM_LOG_LEVEL=5 swtpm_serve "$ver" "$TPM_DIR" || why="swtpm would not serve its state"
+    fi
+    if [[ -z $why ]]; then
+        out=$("$MKSTICK" station totp reseal "$R/totp.img" "${ARCH_OPT[@]}" --pcrs 0,2,4,7 \
+                --label rig --tpm-socket "$TPM_DIR/server.sock" \
+                --event-log "$R/evlog.bin" "${saved[@]}" "${owner[@]}" 2>&1) ||
+            why="reseal failed: $(printf '%s' "$out" | tail -n 1)"
+        printf '%s\n' "$out" > "$R/$c-reseal.log"
+        swtpm_serve_stop
+        local old=$secret
+        secret=$(printf '%s\n' "$out" | sed -n 's/^.*secret: *\([A-Z2-7]*\)$/\1/p' | head -n 1)
+        [[ -z $why && -z $secret ]] && why="reseal printed no secret"
+        [[ -z $why && $secret == "$old" ]] && why="reseal kept the old secret"
+    fi
+
+    # C. the new code, on the same firmware
+    if [[ -z $why ]]; then
+        OTHER_FW=1 boot "$fw" "$tpm" "$R/totp.img"
+        wait_for "FALCON-TPM-PROBE-DONE" 120 || why="the boot after the reseal did not reach the probe"
+        halt
+        log_text "$R/serial.log" > "$R/$c-c.log"
+        shown=$(grep -aoE 'TOTP: [0-9]{3} [0-9]{3}' "$R/$c-c.log" | head -n 1 | cut -c7-)
+        want=$(codes_for "$secret" "$base")
+        if [[ -z $why && -z $shown ]]; then
+            why="no code after the reseal: $(grep -aoE 'TPM[^|]{0,70}' "$R/$c-c.log" | head -n 1)"
+        elif [[ -z $why ]] && ! grep -qx -- "$shown" <<<"$want"; then
+            why="the code $shown is not the new seed's"
+        fi
+    fi
+
+    # D. remove: the index deleted, [totp] gone from STATION.INI
+    if [[ -z $why ]]; then
+        SWTPM_LOG_LEVEL=5 swtpm_serve "$ver" "$TPM_DIR" || why="swtpm would not serve its state"
+    fi
+    if [[ -z $why ]]; then
+        out=$("$MKSTICK" station totp remove "$R/totp.img" "${ARCH_OPT[@]}" \
+                --tpm-socket "$TPM_DIR/server.sock" "${owner[@]}" 2>&1) ||
+            why="remove failed: $(printf '%s' "$out" | tail -n 1)"
+        printf '%s\n' "$out" > "$R/$c-remove.log"
+        swtpm_serve_stop
+        [[ -z $why ]] && mtype -i "$R/totp.img@@1M" ::/EFI/falcon/STATION.INI 2>/dev/null |
+            grep -qi '^\[totp\]' && why="remove left [totp] in STATION.INI"
+    fi
+
+    # E. no code and no warning; the default still starts
+    if [[ -z $why ]]; then
+        OTHER_FW=1 boot "$fw" "$tpm" "$R/totp.img"
+        wait_for "FALCON-TPM-PROBE-DONE" 120 || why="the boot after remove did not start its default"
+        halt
+        log_text "$R/serial.log" > "$R/$c-e.log"
+        if [[ -z $why ]] && grep -aqE 'TOTP: [0-9]{3} [0-9]{3}|The TPM did not release the code' "$R/$c-e.log"; then
+            why="the boot after remove still has a TOTP line"
+        fi
+    fi
+
+    TPM_DIR=$R/swtpm
+    RTC_ARGS=()
+    unset SWTPM_KEEP
+    result "$c" "$why" "warned, resealed to a new secret whose code $shown shows; removed, and no TOTP line after"
+}
+
 # The code shown on a boot of the enrolled totp disk; sets why on a miss.
 jump_code() {   # jump_code STEP ENTRY_JUMP WANT-ROUTE
     local log=$R/$c-$1.log n
@@ -803,7 +910,8 @@ ALL=(uefi-tpm2-probe uefi-tpm2crb-probe uefi-tpm12-probe
      uefi-tpm2-totp-update uefi-tpm12-totp-update
      uefi-sb-tpm2-totp-update uefi-sb-tpm12-totp-update
      uefi-tpm2-totp-jump uefi-tpm12-totp-jump
-     uefi-sb-tpm2-totp-jump uefi-sb-tpm12-totp-jump)
+     uefi-sb-tpm2-totp-jump uefi-sb-tpm12-totp-jump
+     uefi-tpm2-totp-reseal uefi-tpm12-totp-reseal)
 CASES=("$@")
 [[ ${#CASES[@]} -eq 0 ]] && CASES=("${ALL[@]}")
 
@@ -865,6 +973,7 @@ for c in "${CASES[@]}"; do
     totp)    case_totp "$label" "$fw" "$tpm" ;;
     totp-update) case_totp_update "$label" "$fw" "$tpm" ;;
     totp-jump) case_totp_jump "$label" "$fw" "$tpm" ;;
+    totp-reseal) case_totp_reseal "$label" "$fw" "$tpm" ;;
     *) echo "unknown case: $c" >&2; exit 2 ;;
     esac
 done

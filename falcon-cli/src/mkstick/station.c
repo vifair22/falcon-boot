@@ -1512,6 +1512,11 @@ static void status_bios(stn_tally *t, stn_scan *s, stationini *ini,
     if (stn_read_file(sd->d.path, off, len, "/" STATIONINI_FILE, text,
                       sizeof text, &got) == FS_OK)
         show_ini(t, "/" STATIONINI_FILE, text, got, ini, have_ini);
+    else if (stn_read_file(sd->d.path, off, len, STATIONINI_UEFI_PATH, text,
+                           sizeof text, &got) == FS_OK)
+        show_ini(t, "\\EFI\\falcon\\" STATIONINI_FILE " (no /" STATIONINI_FILE
+                 ", so the BIOS half reads the UEFI half's)",
+                 text, got, ini, have_ini);
     else
         log_info("  --   no /%s: the menu waits", STATIONINI_FILE);
 }

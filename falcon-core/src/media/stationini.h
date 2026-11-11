@@ -65,6 +65,9 @@
  * `poweroff` the station waits TUI_IDLE_SECONDS, as every loader does. */
 #define STATIONINI_POWEROFF_MAX     86400u
 #define STATIONINI_FILE        "STATION.INI"
+/* The UEFI station's file, which a BIOS station on the same ESP reads when
+ * its own is absent (docs/DESIGN.md Section 12.7). */
+#define STATIONINI_UEFI_PATH   "/EFI/falcon/" STATIONINI_FILE
 #define STATIONINI_TOTP_KEY_MAX 256u   /* a 2048-bit SRK modulus */
 #define STATIONINI_TOTP_PCRS   16u     /* 0 to 15: the boot's PCRs */
 
