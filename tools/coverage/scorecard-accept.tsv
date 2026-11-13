@@ -1,0 +1,96 @@
+# falcon-boot: scorecard cells the release gate accepts as changed.
+#
+# tools/coverage/scorecard-diff.py reads this beside itself. A cell listed
+# here that was PASS in master's scorecard and is not now is reported as
+# accepted, with its reason, and is neither a regression nor rerun. Every
+# line is a cell the merge request into master is asked to review; when the
+# release's scorecard lands on master, the list is emptied.
+#
+# Columns, tab-separated: id, state, route (run-corpus.sh's terms), reason.
+
+debian-live-13.7	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+debian-live-13.7	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+debian-live-13.7	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+fedora-ws-44	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+fedora-ws-44	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+fedora-ws-44	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+ubuntu-26.04.1	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+ubuntu-26.04.1	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+ubuntu-26.04.1	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+kubuntu-26.04	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+kubuntu-26.04	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+kubuntu-26.04	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+mint-22.3	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+mint-22.3	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+mint-22.3	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+opensuse-tw-20260916	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+opensuse-tw-20260916	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+opensuse-tw-20260916	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+manjaro-26.1.0	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+manjaro-26.1.0	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+arch-2026.09.01	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+arch-2026.09.01	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+arch-2026.01.01	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+arch-2026.01.01	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+systemrescue-13.02	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+systemrescue-13.02	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+kali-2026.2	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+kali-2026.2	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+clonezilla-3.3.3-15	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+clonezilla-3.3.3-15	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+gentoo-min-20260913	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+gentoo-min-20260913	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+gparted-1.8.1-6	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+gparted-1.8.1-6	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+gparted-1.8.1-6	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+cachyos-260809	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+cachyos-260809	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+mx-25.2	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+mx-25.2	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+mx-25.2	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+popos-24.04-20	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+debian-netinst-13.7	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+debian-netinst-13.7	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+debian-netinst-13.7	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+alpine-ext-3.24.2	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+alpine-ext-3.24.2	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+proxmox-ve-9.2-1	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+proxmox-ve-9.2-1	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+proxmox-ve-9.2-1	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+rocky-boot-10.2	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+rocky-boot-10.2	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+rocky-boot-10.2	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+alma-boot-10.2	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+alma-boot-10.2	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+alma-boot-10.2	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+void-base-20250202	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+void-base-20250202	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+nixos-min-26.05	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+nixos-min-26.05	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+leap-agama-16.0	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+leap-agama-16.0	ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+leap-agama-16.0	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+truenas-25.10.7	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+truenas-25.10.7	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+gentoo-min-20260510	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+gentoo-min-20260510	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+windows-11-25h2	off	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-11-25h2	ms	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-11-25h2	moksb	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-server-2025	off	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-server-2025	ms	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-server-2025	moksb	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+pfsense-plus-24.06b7	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+bazzite-stable	off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+bazzite-stable	moksb	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+windows-8.1-x64	off	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-8.1-x64	ms	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-8.1-x64	moksb	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+debian-netinst-13.7-arm64	a64-off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+debian-netinst-13.7-arm64	a64-ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+fedora-ws-44-arm64	a64-off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+opensuse-tw-20261020-arm64	a64-off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+opensuse-tw-20261020-arm64	a64-ms	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+alpine-std-3.24.3-arm64	a64-off	chain	#26: master's PASS was Enter's route; chained, the ISO's own loader starts a system that cannot see the virtual CD after ExitBootServices (DESIGN 6)
+windows-11-arm64	a64-off	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source
+windows-11-arm64	a64-ms	chain	#26: master's PASS was Enter's route; chained, the unpatched installer reaches Setup with no install source

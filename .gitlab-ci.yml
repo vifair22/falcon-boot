@@ -331,6 +331,22 @@ corpus:
     # where a release shows its arm64 media still boot.
     - tools/coverage/harness.sh tools/coverage/run-corpus.sh --no-scorecard --jobs "$CORPUS_JOBS" --states "off ms own moksb bios bios32 bios32-sse2 bios-usb bios-usb-late a64-off a64-ms a64-own" | tee corpus.log
     - tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
+    # What a failed case left, kept with the job: the build directory goes
+    # with the pipeline. Before the reruns, so a job that runs out of time in
+    # them still has them; a cell that then passes alone keeps its first
+    # failure here.
+    - |
+      for r in "$FALCON_BUILD_DIR"/coverage/runs/*/*/result; do
+        [[ -f $r ]] || continue
+        case $(cut -f1 "$r") in FAIL|ERROR) ;; *) continue ;; esac
+        d=${r%/result}
+        k=failures/${d#"$FALCON_BUILD_DIR"/coverage/runs/}
+        mkdir -p "$k"
+        cp -a "$d/result" "$k/"
+        for f in screen.png serial.log; do
+          [[ -f $d/$f ]] && cp -a "$d/$f" "$k/"
+        done
+      done
     - git fetch --depth 1 origin master
     - git show FETCH_HEAD:docs/coverage.md > coverage-master.md
     - |
@@ -347,21 +363,6 @@ corpus:
               --force --jobs 1 --states "$st" --routes "$rt" $ids | tee -a rerun.log
           done
         tools/coverage/harness.sh python3 tools/coverage/scorecard.py > coverage.md
-      done
-    # What a failed case left, kept with the job: the build directory goes
-    # with the pipeline. After the reruns, so a cell that passed alone
-    # leaves nothing.
-    - |
-      for r in "$FALCON_BUILD_DIR"/coverage/runs/*/*/result; do
-        [[ -f $r ]] || continue
-        case $(cut -f1 "$r") in FAIL|ERROR) ;; *) continue ;; esac
-        d=${r%/result}
-        k=failures/${d#"$FALCON_BUILD_DIR"/coverage/runs/}
-        mkdir -p "$k"
-        cp -a "$d/result" "$k/"
-        for f in screen.png serial.log; do
-          [[ -f $d/$f ]] && cp -a "$d/$f" "$k/"
-        done
       done
     - tools/coverage/scorecard-diff.py coverage-master.md coverage.md | tee scorecard-diff.txt
   artifacts:
