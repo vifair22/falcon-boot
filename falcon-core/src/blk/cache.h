@@ -3,7 +3,9 @@
  *
  * Some firmware charges for a read call, not for its bytes: an ASUS B550's
  * AMI USB driver takes about 70 ms for any read up to 64 KiB of a Kingston
- * stick. The drivers above the callback read what their formats lay out, a
+ * DataTraveler Max, whose BOT firmware holds the first non-READ command
+ * after a READ until about 68 ms after it, and AMI sends one before every
+ * 64 KiB. The drivers above the callback read what their formats lay out, a
  * few KiB at a time (a superblock, a directory block, an inode table block,
  * an ISO's volume descriptors), and those small reads are most of the calls
  * a boot makes before the UKI. A read smaller than a window is therefore

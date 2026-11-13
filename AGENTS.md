@@ -30,7 +30,8 @@ all of the UEFI side on AArch64 too (AAVMF, and U-Boot's UEFI for
 devicetree machines), with the ARM64 winjump and an AArch64 appliance;
 and the coverage harness (`docs/coverage.md`), which runs in a container on
 the build host. Falcon jump's PC Card boot (`PCC`, station-legacy's too) is
-experimental and outside the compatibility promise. Status: pre-1.0.
+experimental and outside the compatibility promise. Status: 1.0; Manual
+Section 14.4 is what stays compatible across 1.x.
 
 ## Non-negotiable security invariants (DESIGN.md Section 7)
 

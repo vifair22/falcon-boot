@@ -6,7 +6,7 @@ Copy `.iso` files onto the stick's exFAT partition from any computer, and they a
 
 If you want, the stick can also carry a personal OS on an encrypted partition, which you unlock with one passphrase before it boots.
 
-Falcon also comes in a few smaller forms. You can install it on a machine's own disk as its boot loader, and Falcon-Jump is a 1.44 MB floppy that boots machines too old to boot from USB, CDs or PC Cards. Falcon-Jump is still in development.
+Falcon also comes in a few smaller forms. You can install it on a machine's own disk as its boot loader, and Falcon-Jump is a 1.44 MB floppy that boots machines too old to boot from USB, CDs or PC Cards. Falcon-Jump's PC Card boot is still experimental; everything else it does is proven the same way as the rest of Falcon.
 
 Falcon-Boot is written from the firmware up in C, with its own UEFI loader, its own BIOS loader, and its own filesystem, LUKS2 and Windows-image code.
 
@@ -117,7 +117,7 @@ The mainstream tier is 27 images, including Debian, Fedora, Ubuntu, Mint, openSU
 
 ## Secure Boot stays on
 
-Everything Falcon starts is verified by the platform through shim, the same way a distro's own boot loader is. Media is verified against Microsoft's keys or against a key that's yours alone. Each stick makes its own key pair, you enroll its certificate once per machine, and you sign ("bless") media with it, either on the stick's own appliance or on any Linux host. Falcon itself only verifies: it never signs, and it holds no key. `docs/DESIGN.md` Section 7 describes the model in full.
+Everything Falcon starts is verified by the platform through shim, the same way a distro's own boot loader is. Media is verified against Microsoft's keys or against a key that's yours alone. Each stick makes its own key pair, you enroll its certificate once per machine, and you sign ("bless") media with it, either on the stick's own appliance or on any Linux host. Falcon's loader only verifies: it never signs, and it holds no key. The stick's private key lives encrypted on its shelf, where only the signing appliance and the sign tool read it. `docs/DESIGN.md` Section 7 describes the model in full.
 
 ## How it compares with Ventoy
 
