@@ -360,17 +360,24 @@ selected_row() {
                    grep '^>' | tail -n 1 |
                    sed -e 's/^> *//' -e 's/ *$//')"
 }
+# The image row is the one that is not a folder (its name ends in '/'), the
+# firmware-setup row or the personal OS: a long name is cut to make room for
+# its tags, so its extension is not always on screen (falcon-core/src/tui).
+image_row() {   # image_row ROW
+    local name=${1%% *}
+    [[ -n "$name" && "$name" != */ && "$name" != Reboot && "$name" != Personal ]]
+}
 # Both loaders: falcon-bios sends its menu to serial as the same ANSI
 # sequences OVMF's terminal does (falcon-bios/src/console/display.c).
 for ((i = 0; i < 8; i++)); do
     row=$(selected_row)
-    [[ "$row" == *.iso* || "$row" == *.img* ]] && break
+    image_row "$row" && break
     echo "sendkey down" | socat - UNIX-CONNECT:"$MON" >/dev/null
     sleep 1
 done
 # The key on any other row (firmware setup, /falcon) opens that row's dialog,
 # and the nudges below then boot whatever they reach.
-if [[ "$row" != *.iso* && "$row" != *.img* ]]; then
+if ! image_row "$row"; then
     finish ERROR "no image row selected in the menu (last: ${row:-none})"
 fi
 
