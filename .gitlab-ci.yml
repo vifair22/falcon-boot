@@ -271,6 +271,9 @@ release-proof:
     FALCON_FIXTURES: /srv/falcon/fixtures
   script:
     - *shims
+    - |
+      notes="docs/release-notes/$(cat release_version).md"
+      [[ -s $notes ]] || { echo "FAIL: no $notes; the tag would publish no release notes"; exit 1; }
     - tools/coverage/harness.sh make release MEMTEST=/fixtures/memtest/mt86p_810_i586 MEMTEST_EFI=/fixtures/memtest/mt86p_810_x86_64
     - NO_SIGN=1 tools/release/publish-arch.sh "$FALCON_BUILD_DIR/release"
     - tools/coverage/harness.sh make mok-test sign test-uki payload cli bios station

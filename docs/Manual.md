@@ -4219,7 +4219,10 @@ packages (`fetch-shims.sh`, Section 13.6) and memtest86+'s release binaries
 (`mt86p_810_i586`, `mt86p_810_x86_64`), and refuses without them. The tag's
 pipeline runs the same target with the fixture store's memtest86+, checks
 that the tag is `release_version`'s, and publishes with
-`tools/release/publish.sh`.
+`tools/release/publish.sh`, whose release description is
+`docs/release-notes/X.Y.Z.md` followed by the checksums. A release without
+its notes file is refused there, and by `release-proof` on the merge
+request before it.
 
 Before that, the merge request into master proves the same files in its
 `release-proof` job: `make release` as the tag runs it, the Arch packages

@@ -27,18 +27,24 @@ for f in "$DIR"/*; do
     links+=("$name")
 done
 
-# The release, its notes the checksums a person compares a download with.
-python3 - "$TAG" "$PKG" "$DIR/SHA256SUMS" "${links[@]}" >release.json <<'PY'
+# The release: its notes from docs/release-notes/<version>.md, which the
+# tag must carry, then the checksums a person compares a download with.
+NOTES=docs/release-notes/$VER.md
+[[ -s $NOTES ]] || { echo "publish: no $NOTES; write the release notes first" >&2; exit 1; }
+python3 - "$TAG" "$PKG" "$DIR/SHA256SUMS" "$NOTES" "${links[@]}" >release.json <<'PY'
 import json, sys
-tag, pkg, sums, names = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+tag, pkg, sums, notes, names = (sys.argv[1], sys.argv[2], sys.argv[3],
+                                sys.argv[4], sys.argv[5:])
 with open(sums) as f:
     checksums = f.read()
+with open(notes) as f:
+    body = f.read().rstrip() + "\n\n"
 print(json.dumps({
     "tag_name": tag,
     "name": "falcon-boot " + tag[1:],
-    "description": "Unsigned loaders and the tools that install them; "
-                   "docs/Manual.md Section 14 says how to check and install "
-                   "them.\n\n```\n" + checksums + "```\n",
+    "description": body + "Unsigned loaders and the tools that install "
+                   "them; docs/Manual.md Section 14 says how to check and "
+                   "install them.\n\n```\n" + checksums + "```\n",
     "assets": {"links": [
         {"name": n, "url": pkg + "/" + n, "link_type": "package"}
         for n in names]},
