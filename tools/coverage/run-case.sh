@@ -211,15 +211,26 @@ finish() {   # finish VERDICT REASON
         sleep "$FALCON_CASE_LINGER"
     fi
     if [[ -S "$MON" ]]; then
-        MON_SOCK="$MON" falcon-efi/tools/rig-shot.sh screen "$OUTDIR" \
+        MON_SOCK="$MON" timeout 30 falcon-efi/tools/rig-shot.sh screen "$OUTDIR" \
             >/dev/null 2>&1 || true
         [[ -f "$OUTDIR/screen.ppm" ]] &&
             what=$(screen_kind "$OUTDIR/screen.ppm")
         rm -f "$OUTDIR/screen.ppm"
     fi
+    # A guest stuck in the host's kernel ignores SIGTERM and may ignore
+    # SIGKILL too; the verdict is written either way, and a QEMU that will
+    # not go is left to the harness's container rather than waited on.
     if [[ -n "$QPID" ]]; then
+        local i
         kill "$QPID" 2>/dev/null || true
-        wait "$QPID" 2>/dev/null || true
+        for (( i = 0; i < 30 && $(kill -0 "$QPID" 2>/dev/null; echo $?) == 0; i++ )); do
+            sleep 1
+        done
+        kill -9 "$QPID" 2>/dev/null || true
+        for (( i = 0; i < 10 && $(kill -0 "$QPID" 2>/dev/null; echo $?) == 0; i++ )); do
+            sleep 1
+        done
+        kill -0 "$QPID" 2>/dev/null || wait "$QPID" 2>/dev/null || true
         QPID=
     fi
     rm -f "$MON" "$VARS"

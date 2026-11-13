@@ -41,6 +41,8 @@
 #   --force                   rerun cases that already have a result
 #   --no-scorecard            leave docs/coverage.md alone
 # Env: FALCON_CORPUS  corpus directory (default /srv/falcon/corpus)
+#      CORPUS_CASE_LIMIT  seconds before a case that has not ended is
+#                         stopped and called ERROR (default 10800)
 
 set -euo pipefail
 
@@ -61,6 +63,8 @@ STATES="off ms own"
 ROUTES="dnd chain blessed"
 JOBS=3
 TIMEOUT=300
+# Seconds before a case that has not ended is stopped and called ERROR.
+CASE_LIMIT=${CORPUS_CASE_LIMIT:-10800}
 FORCE=0
 SCORECARD=1
 WANT=()
@@ -230,13 +234,22 @@ run_one() {   # run_one ID STATE ROUTE
     stick="$STICKS/$id.img"
     [[ "$rt" == blessed ]] && stick="$STICKS/$id.blessed.img"
     out="$RUNS/$id/$st-$rt"
-    r=$(tools/coverage/run-case.sh "$stick" "$st" "$rt" "$out" "$TIMEOUT" 2>&1 |
-        tail -1)
+    # A case that never ends, a guest stuck in the host's kernel, would hold
+    # its slot, and the run, for good: CASE_LIMIT ends it with an ERROR cell.
+    # It is well past the slowest case, an XP install's three phases.
+    rm -f "$out/result"
+    r=$(timeout -k 60 "$CASE_LIMIT" tools/coverage/run-case.sh "$stick" "$st" \
+            "$rt" "$out" "$TIMEOUT" 2>&1 | tail -1)
+    if [[ ! -s "$out/result" ]]; then
+        mkdir -p "$out"
+        r=$(printf 'ERROR\tthe case did not end within %ss\t%s' "$CASE_LIMIT" "$CASE_LIMIT")
+        printf '%s\n' "$r" > "$out/result"
+    fi
     printf '%s\n' "$VERSION" > "$out/loader"
     printf '%-24s %-4s %-8s %s\n' "$id" "$st" "$rt" "$r"
 }
 export -f run_one
-export STICKS RUNS TIMEOUT VERSION
+export STICKS RUNS TIMEOUT VERSION CASE_LIMIT
 
 echo "== ${#CASES[@]} case(s), $JOBS at a time"
 if [[ ${#CASES[@]} -gt 0 ]]; then
