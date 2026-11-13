@@ -6,7 +6,8 @@ well. A distilled Ventoy: drag-and-drop ISO booting, plus a
 first-class path for booting a personal LUKS-backed OS via a Unified Kernel
 Image. Section 11 draws every route both loaders take.
 
-Status: pre-1.0 MVP. This document is the source of truth for architecture and
+Status: 1.0 (Manual Section 14.4 says what stays compatible across 1.x). This
+document is the source of truth for architecture and
 scope. It is written to be read cold, months from now, by the person who has to
 change it.
 
@@ -331,8 +332,10 @@ sixteen slots of up to 64 KiB, 1 MiB below 4 GiB, least recently used
 replaced; a miss reads the whole window, cut at the device's end, in one
 call. Some firmware charges per call rather than per byte (an ASUS B550's
 AMI USB driver takes about 70 ms for any read up to 64 KiB of a Kingston
-stick), and the drivers' metadata reads are a few KiB each, so it is the
-call count that the windows cut (`FalconReadInfo`, Section 5.5, counts
+DataTraveler Max: in BOT mode the stick holds the first command after a
+READ that is not a READ until about 68 ms after it, and AMI sends one
+before every 64 KiB), and the drivers' metadata reads are a few KiB each,
+so it is the call count that the windows cut (`FalconReadInfo`, Section 5.5, counts
 them). A window's fill is also how long a key waits while the menu's probe
 reads (Section 7.8), so each device's window is sized from its own fills on
 the loader's clock: every full fill scales the next window by a tenth of a
@@ -1358,7 +1361,7 @@ appliance does only what needs the private key (Section 7.5). Media parsers
 in the loader live in `falcon-core`, EFI-free, host-tested, with corruption
 sweeps and fuzzing, and only ever read.
 
-What that puts in the loader, each a milestone in the roadmap:
+What that puts in the loader:
 
 - **A read-only ISO9660 (+ Rock Ridge, Joliet) and UDF reader in
   `falcon-core`**, registered in the filesystem registry like exFAT and
@@ -1413,14 +1416,14 @@ installers (Debian netinst, Alpine, Proxmox) boot direct through the hook's
 fallbacks: the extent map carried in the initrd, a loop device where the
 kernel has no device-mapper, a module package read out of the ISO's own pool
 where the initramfs has neither, and a short table of per-distro nudges
-(roadmap M4). With Secure Boot on, Enter takes the same route through the
+With Secure Boot on, Enter takes the same route through the
 ISO's own shim when the kernel carries SBAT metadata (D3a: Fedora, Rocky,
 Alma), which boots it with no blessing wherever db trusts the Microsoft CA;
 other kernels go through the ISO's own signed
 GRUB with a grub.cfg of ours (D3b), and chainload only when that cannot
 apply either (Section 11.2.2).
 
-**Windows** (roadmap M6) boots from a stock ISO with nothing prepared. When
+**Windows** boots from a stock ISO with nothing prepared. When
 Enter lands on a Windows row, the loader reads `\sources\boot.wim` out of the
 ISO's UDF tree, patches it in memory (`falcon-core/src/wim`), and serves the
 ISO through the virtual CD with the patch laid over it (`falcon-efi/src/win`).
@@ -1451,7 +1454,7 @@ answer file does without a process outliving Setup. On a machine with no
 TPM, stock Setup stops at the requirements screen; with both options it goes
 from the product key straight to disk selection.
 
-**BSD** media (roadmap M7) takes a third route, because a FreeBSD kernel
+**BSD** media takes a third route, because a FreeBSD kernel
 loses the virtual CD exactly as a Linux one does and has no initramfs for
 falcon-hook to ride in. What it has instead is a loader that will load a file
 into RAM as a memory disk and mount root from it, which needs no kernel module
