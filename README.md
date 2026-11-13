@@ -175,7 +175,7 @@ make run             # the test stick under QEMU/OVMF with a display window
 
 The rigs (`make test-stick`, `test-core`, `test-station*`, `test-tpm-rig`, `test-jump`, `test-bios-img` and the rest) are listed in Manual Section 13. The corpus runs in the same container, through `tools/coverage/harness.sh` with no command, and that's how the measurements in `docs/coverage.md` are made.
 
-The pipeline (`.gitlab-ci.yml`) runs every merge request through the tests (with JUnit reports), `make analyze`, the coverage gate and the build. A merge request into `master` is a release shipping, so it also runs the rigs listed in `.gitlab-ci.yml` and the corpus under every state, and it fails if any scorecard cell that passes on `master` no longer does (`tools/coverage/scorecard-diff.py`). `test-devlink` isn't one of those rigs, because DevLink is a separate tool outside the release.
+The pipeline (`.gitlab-ci.yml`) runs every merge request through the tests (with JUnit reports), `make analyze`, the coverage gate and the build. A merge request into `master` is a release shipping, so it also runs the rigs listed in `.gitlab-ci.yml` and the corpus under every state, and it fails if any scorecard cell that passes on `master` no longer does (`tools/coverage/scorecard-diff.py`), unless `tools/coverage/scorecard-accept.tsv` lists that cell with a reason for the merge request's reviewer. `test-devlink` isn't one of those rigs, because DevLink is a separate tool outside the release.
 
 `make install` builds `falcon-boot-mkstick` and `falcon-boot-sign` and copies them into `/usr/local/bin`, and it honors `PREFIX` and `DESTDIR`. `make uninstall` removes them.
 
