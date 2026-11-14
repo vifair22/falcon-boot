@@ -1,6 +1,6 @@
 # falcon-boot
 
-Falcon-Boot is a cross-platform USB boot loader that aims to boot as many operating systems as possible, straight from their ISOs. It currently supports hundreds of ISOs, and around 50 of the most popular operating systems make up the core corpus that gets validated on every release ([see coverage.md](docs/coverage.md)). Falcon supports BIOS (i586 and x86-64) and UEFI (AArch64 and x86-64), so it runs on most systems.
+Falcon-Boot is a cross-platform USB boot loader that aims to boot as many operating systems as possible, straight from their ISOs. Every release is tested against a corpus of 73 ISOs, and 49 of them, the most popular operating systems, make up the core tiers that have to keep booting ([see coverage.md](docs/coverage.md)). Falcon supports BIOS (i586 and x86-64) and UEFI (AArch64 and x86-64), so it runs on most systems.
 
 Copy `.iso` files onto the stick's exFAT partition from any computer, and they appear in the menu ready to boot: Linux, Windows install media, FreeBSD, Proxmox, TrueNAS, ESXi, rescue and imaging tools, and memtest86+.
 
@@ -111,9 +111,9 @@ While the menu is up, Falcon looks inside every image on the stick and picks the
 
 ### Measured on real media
 
-Every release is tested by booting 63 ISOs under six firmware states: Secure Boot off, Secure Boot on with Microsoft's keys, Secure Boot on with only your own keys, Secure Boot on with shim's validation off, BIOS, and BIOS on a 32-bit processor. A merge into `master` fails if any image that booted before no longer does.
+Every release is tested by booting 73 ISOs under twelve firmware setups: Secure Boot off, on with Microsoft's keys, on with only your own keys, and on with shim's validation off; BIOS on a 64-bit machine, on a 32-bit Pentium III, and on a 32-bit machine with SSE2; BIOS with the stick on USB, and with it pulled out and plugged back in while Windows Setup starts; and AArch64 with Secure Boot off, with Microsoft's keys and with your own keys. A merge into `master` fails if any image that booted before no longer does.
 
-The mainstream tier is 27 images, including Debian, Fedora, Ubuntu, Mint, openSUSE, Arch, Manjaro, CachyOS, Pop!_OS, Kali, SystemRescue, Clonezilla, GParted, and Windows 10, 11 and Server 2025. They boot every time when you press Enter on Falcon's default route, with Secure Boot off, with Secure Boot on under Microsoft's keys, and on BIOS. With Secure Boot on, the platform refuses an image Microsoft didn't sign, and that image boots once you've blessed it. The second tier, which includes Proxmox and TrueNAS, is at 100% too. `docs/coverage.md` has the full matrix, cell by cell, including what doesn't boot yet.
+The mainstream tier is 33 images, including Debian, Fedora, Ubuntu, Mint, openSUSE, Arch, Manjaro, CachyOS, Pop!_OS, Kali, SystemRescue, Clonezilla, GParted, Windows 10, 11 and Server 2025, and arm64 builds of Debian, Fedora, Ubuntu, openSUSE and Windows 11. They all boot when you press Enter on Falcon's default route, with Secure Boot off, with Secure Boot on under Microsoft's keys, on BIOS, and on AArch64. The one miss is Windows 10 x86 on the Pentium III, which doesn't have the SSE2 that Windows 8 and later need; it boots on the 32-bit machine that does. With Secure Boot on, the platform refuses an image its keys don't cover (one Microsoft didn't sign, or, with only your own keys, one Microsoft did), and that image boots once you've blessed it. Windows media can't be blessed, so it needs Microsoft's keys. The second tier, which includes Proxmox and TrueNAS, is at 100% under UEFI; its one BIOS miss is MemTest86's `.img`, because the BIOS stick doesn't boot `.img` files yet. `docs/coverage.md` has the full matrix, cell by cell, including what doesn't boot.
 
 ## Secure Boot stays on
 
