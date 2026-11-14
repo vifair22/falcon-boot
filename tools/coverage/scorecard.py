@@ -170,6 +170,19 @@ def main():
     w('and listing the disk it found, and serial stayed empty for 300s. Read')
     w('the screenshot before believing one of these.')
     w('')
+    w('A chain cell under UEFI for a Linux or BSD live ISO fails by design:')
+    w("the ISO's own loader starts a system that cannot see the virtual CD")
+    w("after ExitBootServices (DESIGN 6), and Enter's routes are the ones that")
+    w('work. A Windows chain cell reaches Setup with no install source, since')
+    w('c starts the installer unpatched. Scorecards before 1.0 counted many of')
+    w('these as passing: the harness walked onto another row and Enter booted')
+    w('the image (#26).')
+    w('')
+    w('Known failures, each with its issue: memtest86-11-x64 on BIOS, since')
+    w('the BIOS stick boots no .img (#13); windows-xp-pro-x64, which stops in')
+    w('text-mode Setup with STOP 0x7B (#31). opnsense-25.1 is a harness limit:')
+    w('a 4 GB q35 guest cannot hold its 2.2 GB image below 4 GB.')
+    w('')
 
     head = ['ISO', 'tier', 'family']
     for st, name in states:
