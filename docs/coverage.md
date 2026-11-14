@@ -14,6 +14,11 @@ no db and no shim, so it has no blessed cell and nothing to refuse.
 BIOS, i686 is the same machine without a 64-bit mode, and is
 where the 32-bit ISOs are judged; they are N/A under UEFI, whose loader
 is x86-64, and the 64-bit ISOs are N/A there.
+BIOS, i686 SSE2 runs the same ISOs on a processor with SSE2, PAE and
+NX and still no 64-bit mode. BIOS, i686 is the Pentium III floor, with
+neither SSE2 nor NX, so Windows 8 and later x86 failing there while
+checking the processor is the expected result (`win_cpu_lacks`,
+`falcon-bios/src/win/win.c`); BIOS, i686 SSE2 is where they are judged.
 
 The headline columns are Secure Boot off and Secure Boot on where db
 trusts the Microsoft CA. Secure Boot on with only the stick owner's
@@ -41,171 +46,260 @@ example (2026-09-20): its default entry is "Clonezilla live (VGA
 and listing the disk it found, and serial stayed empty for 300s. Read
 the screenshot before believing one of these.
 
-Loader: 0.2.0_20261025.1825.dev, 0.2.0_20261025.2021.dev
+A chain cell under UEFI for a Linux or BSD live ISO fails by design:
+the ISO's own loader starts a system that cannot see the virtual CD
+after ExitBootServices (DESIGN 6), and Enter's routes are the ones that
+work. A Windows chain cell reaches Setup with no install source, since
+c starts the installer unpatched. Scorecards before 1.0 counted many of
+these as passing: the harness walked onto another row and Enter booted
+the image (#26).
+
+Known failures, each with its issue: memtest86-11-x64 on BIOS, since
+the BIOS stick boots no .img (#13); windows-xp-pro-x64, which stops in
+text-mode Setup with STOP 0x7B (#31). opnsense-25.1 is a harness limit:
+a 4 GB q35 guest cannot hold its 2.2 GB image below 4 GB.
+
+Loader: 1.0.0_20261113.1922.dev, 1.0.0_20261113.2257.dev, 1.0.0_20261113.2258.dev
 
 ## Summary
 
-| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | SB on, validation off, drop | BIOS, drop | BIOS, i686, drop | AArch64 SB off, drop | AArch64 SB on, MS CA | AArch64 SB on, own keys |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A | 32 | 22/22 (100%) | 100% | 22/22 (100%) | 95% | 19/22 (86%) | 22/22 (100%) | 27/27 (100%) | 4/5 (80%) | 5/5 (100%) | 5/5 (100%) | 4/5 (80%) |
-| B | 15 | 9/9 (100%) | 90% | 9/9 (100%) | - | 9/9 (100%) | 9/9 (100%) | 13/13 (100%) | 4/4 (100%) | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) |
-| C | 25 | 7/11 (63%) | - | 4/11 (36%) | - | 2/11 (18%) | 6/11 (54%) | 12/23 (52%) | 3/12 (25%) | 2/2 (100%) | 1/2 (50%) | 1/2 (50%) |
+| tier | ISOs run | SB off, drop | target | SB on, MS CA | target | SB on, own keys | SB on, validation off, drop | BIOS, drop | BIOS, i686, drop | BIOS, i686 SSE2, drop | BIOS, USB stick, drop | BIOS, USB stick late, drop | AArch64 SB off, drop | AArch64 SB on, MS CA | AArch64 SB on, own keys |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A | 33 | 23/23 (100%) | 100% | 23/23 (100%) | 95% | 19/23 (82%) | 23/23 (100%) | 28/28 (100%) | 4/5 (80%) | 5/5 (100%) | 4/4 (100%) | 4/4 (100%) | 5/5 (100%) | 5/5 (100%) | 4/5 (80%) |
+| B | 16 | 10/10 (100%) | 90% | 10/10 (100%) | - | 10/10 (100%) | 10/10 (100%) | 13/14 (92%) | 4/4 (100%) | 4/4 (100%) | - | - | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) |
+| C | 24 | 7/11 (63%) | - | 4/11 (36%) | - | 2/11 (18%) | 6/11 (54%) | 13/22 (59%) | 4/11 (36%) | 5/11 (45%) | 7/8 (87%) | 7/8 (87%) | 2/2 (100%) | 1/2 (50%) | 1/2 (50%) |
 
 ## Matrix
 
-| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | SB on, validation off drop | SB on, validation off chain | SB on, validation off bless | BIOS drop | BIOS chain | BIOS bless | BIOS, i686 drop | BIOS, i686 chain | BIOS, i686 bless | AArch64 SB off drop | AArch64 SB off chain | AArch64 SB off bless | AArch64 SB on, MS CA drop | AArch64 SB on, MS CA chain | AArch64 SB on, MS CA bless | AArch64 SB on, own keys drop | AArch64 SB on, own keys chain | AArch64 SB on, own keys bless |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| debian-live-13.7 | A | debian-live | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| fedora-ws-44 | A | fedora-live | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| ubuntu-26.04.1 | A | casper | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| kubuntu-26.04 | A | casper | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| mint-22.3 | A | casper | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| opensuse-tw-20260916 | A | suse-live | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| manjaro-26.1.0 | A | manjaro | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| arch-2026.09.01 | A | arch | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| arch-2026.01.01 | A | arch | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| systemrescue-13.02 | A | systemrescue | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| kali-2026.2 | A | debian-live | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| clonezilla-3.3.3-15 | A | debian-live | PASS | PASS | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| gentoo-min-20260913 | A | gentoo | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| hbcd-pe-1.0.8 | C | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| gparted-1.8.1-6 | A | debian-live | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| cachyos-260809 | A | arch | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| mx-25.2 | A | antix | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| popos-24.04-20 | A | casper | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| debian-netinst-13.7 | B | debian-installer | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| alpine-ext-3.24.2 | B | alpine | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| proxmox-ve-9.2-1 | B | proxmox | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| rocky-boot-10.2 | B | anaconda | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| alma-boot-10.2 | B | anaconda | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| void-base-20250202 | B | void | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| nixos-min-26.05 | B | nixos | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| leap-agama-16.0 | B | suse-installer | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| truenas-25.10.7 | B | truenas | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| gentoo-min-20260510 | A | gentoo | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-11-25h2 | A | windows | PASS | PASS | N/A | PASS | PASS | N/A | REFUSED | REFUSED | N/A | PASS | PASS | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-server-2025 | A | windows | PASS | PASS | N/A | PASS | PASS | N/A | REFUSED | REFUSED | N/A | PASS | PASS | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | FAIL | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | REFUSED | FAIL | FAIL | REFUSED | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| pfsense-plus-24.06b7 | C | freebsd | PASS | PASS | PASS | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | REFUSED | REFUSED | REFUSED | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| bazzite-stable | A | bazzite | PASS | PASS | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | PASS | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| alpine-std-x86-3.24.2 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| archlinux32-2024.07.10 | A | arch | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| debian-netinst-12.15-i386 | B | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-10-22h2-x86 | A | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| freedos-1.4-live | C | freedos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| reactos-0.4.16 | C | reactos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| freebsd-disc1-14.5-i386 | C | freebsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| openbsd-7.9-i386 | C | openbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| netbsd-10.2-i386 | C | netbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| haiku-r1b6-x86_gcc2h | C | haiku | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| clonezilla-3.2.0-5-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| gparted-1.6.0-10-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| memtest86plus-8.10-x86_64 | C | memtest | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| antix-26-386-full | A | antix | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| tinycore-17.1 | B | tinycore | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| slackware-15.0-dvd | B | slackware | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-2000-pro-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-xp-pro-sp3-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-xp-pro-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-vista-sp1-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-7-x64 | C | windows | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-8.1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| windows-8.1-x64 | C | windows | PASS | PASS | N/A | PASS | PASS | N/A | REFUSED | REFUSED | N/A | PASS | PASS | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| debian-netinst-13.7-arm64 | A | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS |
-| fedora-ws-44-arm64 | A | fedora-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
-| ubuntu-26.04.1-arm64 | A | casper | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS |
-| opensuse-tw-20261020-arm64 | A | suse-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS |
-| alpine-std-3.24.3-arm64 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| freebsd-bootonly-15.1-arm64 | C | freebsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
-| windows-11-arm64 | A | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A | REFUSED | REFUSED | N/A |
-| memtest86-11-arm64 | B | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS |
-| efi-shell-aa64-2025.02 | C | efi-shell | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
+| ISO | tier | family | SB off drop | SB off chain | SB off bless | SB on, MS CA drop | SB on, MS CA chain | SB on, MS CA bless | SB on, own keys drop | SB on, own keys chain | SB on, own keys bless | SB on, validation off drop | SB on, validation off chain | SB on, validation off bless | BIOS drop | BIOS chain | BIOS bless | BIOS, i686 drop | BIOS, i686 chain | BIOS, i686 bless | BIOS, i686 SSE2 drop | BIOS, i686 SSE2 chain | BIOS, i686 SSE2 bless | BIOS, USB stick drop | BIOS, USB stick chain | BIOS, USB stick bless | BIOS, USB stick late drop | BIOS, USB stick late chain | BIOS, USB stick late bless | AArch64 SB off drop | AArch64 SB off chain | AArch64 SB off bless | AArch64 SB on, MS CA drop | AArch64 SB on, MS CA chain | AArch64 SB on, MS CA bless | AArch64 SB on, own keys drop | AArch64 SB on, own keys chain | AArch64 SB on, own keys bless |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| debian-live-13.7 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| fedora-ws-44 | A | fedora-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| ubuntu-26.04.1 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| kubuntu-26.04 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| mint-22.3 | A | casper | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| opensuse-tw-20260916 | A | suse-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| manjaro-26.1.0 | A | manjaro | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| arch-2026.09.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | REFUSED | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| arch-2026.01.01 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | REFUSED | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| systemrescue-13.02 | A | systemrescue | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| kali-2026.2 | A | debian-live | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| clonezilla-3.3.3-15 | A | debian-live | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| gentoo-min-20260913 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| hbcd-pe-1.0.8 | C | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| gparted-1.8.1-6 | A | debian-live | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| cachyos-260809 | A | arch | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| mx-25.2 | A | antix | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| popos-24.04-20 | A | casper | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| debian-netinst-13.7 | B | debian-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| alpine-ext-3.24.2 | B | alpine | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| proxmox-ve-9.2-1 | B | proxmox | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| rocky-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| alma-boot-10.2 | B | anaconda | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| void-base-20250202 | B | void | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| nixos-min-26.05 | B | nixos | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| leap-agama-16.0 | B | suse-installer | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| truenas-25.10.7 | B | truenas | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| freebsd-bootonly-15.1 | C | freebsd | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| gentoo-min-20260510 | A | gentoo | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-11-25h2 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-server-2025 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| esxi-7.0u3l | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| esxi-8.0u3 | C | esxi | PASS | PASS | UNBLESSABLE | FAIL | FAIL | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | FAIL | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| macrium-rescue-8.0 | A | windows-pe | PASS | PASS | UNBLESSABLE | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | PASS | PASS | UNBLESSABLE | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| opnsense-25.1 | C | freebsd | FAIL | FAIL | FAIL | FAIL | REFUSED | FAIL | FAIL | REFUSED | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| pfsense-plus-24.06b7 | C | freebsd | PASS | FAIL | PASS | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL | REFUSED | REFUSED | REFUSED | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| bazzite-stable | A | bazzite | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | PASS | FAIL | REFUSED | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| alpine-std-x86-3.24.2 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| archlinux32-2024.07.10 | A | arch | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| debian-netinst-12.15-i386 | B | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-10-22h2-x86 | A | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-10-22h2-x64 | A | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| freedos-1.4-live | C | freedos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| reactos-0.4.16 | C | reactos | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| freebsd-disc1-14.5-i386 | C | freebsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| openbsd-7.9-i386 | C | openbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| netbsd-10.2-i386 | C | netbsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| haiku-r1b6-x86_gcc2h | C | haiku | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| clonezilla-3.2.0-5-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| gparted-1.6.0-10-i686 | A | debian-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| memtest86plus-8.10-x86_64 | C | memtest | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS | PASS | PASS | PASS | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| memtest86plus-8.10-i586 | C | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| memtest86-11-x64 | B | memtest | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS | PASS | PASS | PASS | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| antix-26-386-full | A | antix | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| tinycore-17.1 | B | tinycore | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| slackware-15.0-dvd | B | slackware | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | N/A | PASS | PASS | N/A | PASS | PASS | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-xp-pro-sp3-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-xp-pro-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-vista-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-vista-sp1-x64 | C | windows | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-7-sp1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-7-x64 | C | windows | FAIL | FAIL | N/A | REFUSED | REFUSED | N/A | REFUSED | REFUSED | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-8.1-x86 | C | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | FAIL | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| windows-8.1-x64 | C | windows | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| debian-netinst-13.7-arm64 | A | debian-installer | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
+| fedora-ws-44-arm64 | A | fedora-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | PASS | FAIL | FAIL | PASS | REFUSED | REFUSED | PASS |
+| ubuntu-26.04.1-arm64 | A | casper | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS |
+| opensuse-tw-20261020-arm64 | A | suse-live | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | PASS | PASS | FAIL | PASS | REFUSED | REFUSED | PASS |
+| alpine-std-3.24.3-arm64 | B | alpine | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| freebsd-bootonly-15.1-arm64 | C | freebsd | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | REFUSED | REFUSED | PASS | REFUSED | REFUSED | PASS |
+| windows-11-arm64 | A | windows | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | FAIL | N/A | PASS | FAIL | N/A | REFUSED | REFUSED | N/A |
+| memtest86-11-arm64 | B | memtest | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | PASS | PASS | PASS | PASS | REFUSED | REFUSED | PASS |
+| efi-shell-aa64-2025.02 | C | efi-shell | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | PASS | PASS | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE | REFUSED | REFUSED | UNBLESSABLE |
 
 ## Failures
 
 | ISO | state | route | verdict | reason |
 |---|---|---|---|---|
+| debian-live-13.7 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| debian-live-13.7 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| debian-live-13.7 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | debian-live-13.7 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | debian-live-13.7 | bios | chain | FAIL | no userland within 300s (screen: text console) |
-| fedora-ws-44 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: graphical) |
+| fedora-ws-44 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| fedora-ws-44 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| fedora-ws-44 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| fedora-ws-44 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | fedora-ws-44 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| ubuntu-26.04.1 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| ubuntu-26.04.1 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| ubuntu-26.04.1 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | ubuntu-26.04.1 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | ubuntu-26.04.1 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| kubuntu-26.04 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| kubuntu-26.04 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| kubuntu-26.04 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | kubuntu-26.04 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | kubuntu-26.04 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| mint-22.3 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| mint-22.3 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| mint-22.3 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | mint-22.3 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | mint-22.3 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| opensuse-tw-20260916 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| opensuse-tw-20260916 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| opensuse-tw-20260916 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | opensuse-tw-20260916 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | opensuse-tw-20260916 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| manjaro-26.1.0 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| manjaro-26.1.0 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | manjaro-26.1.0 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | manjaro-26.1.0 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| arch-2026.09.01 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | arch-2026.09.01 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | arch-2026.09.01 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| arch-2026.01.01 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | arch-2026.01.01 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | arch-2026.01.01 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| systemrescue-13.02 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| systemrescue-13.02 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | systemrescue-13.02 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | systemrescue-13.02 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| kali-2026.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| kali-2026.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | kali-2026.2 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | kali-2026.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| clonezilla-3.3.3-15 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.3.3-15 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| clonezilla-3.3.3-15 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | clonezilla-3.3.3-15 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | clonezilla-3.3.3-15 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| gentoo-min-20260913 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| gentoo-min-20260913 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | gentoo-min-20260913 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | gentoo-min-20260913 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.8.1-6 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.8.1-6 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.8.1-6 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | gparted-1.8.1-6 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | gparted-1.8.1-6 | bios | chain | FAIL | no userland within 300s (screen: text console) |
-| cachyos-260809 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: graphical) |
+| cachyos-260809 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| cachyos-260809 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
+| cachyos-260809 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | cachyos-260809 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| mx-25.2 | off | chain | FAIL | no userland within 300s (screen: graphical) |
+| mx-25.2 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
+| mx-25.2 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | mx-25.2 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | mx-25.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| popos-24.04-20 | moksb | chain | FAIL | the guest powered off or reset |
 | popos-24.04-20 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
+| debian-netinst-13.7 | off | chain | FAIL | no userland within 300s (screen: graphical) |
+| debian-netinst-13.7 | ms | chain | FAIL | no userland within 300s (screen: graphical) |
+| debian-netinst-13.7 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-13.7 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | debian-netinst-13.7 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
+| alpine-ext-3.24.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| alpine-ext-3.24.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | alpine-ext-3.24.2 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | alpine-ext-3.24.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| proxmox-ve-9.2-1 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| proxmox-ve-9.2-1 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| proxmox-ve-9.2-1 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | proxmox-ve-9.2-1 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | proxmox-ve-9.2-1 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| rocky-boot-10.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| rocky-boot-10.2 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| rocky-boot-10.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | rocky-boot-10.2 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | rocky-boot-10.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| alma-boot-10.2 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| alma-boot-10.2 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| alma-boot-10.2 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | alma-boot-10.2 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | alma-boot-10.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| void-base-20250202 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| void-base-20250202 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | void-base-20250202 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | void-base-20250202 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| nixos-min-26.05 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| nixos-min-26.05 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | nixos-min-26.05 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | nixos-min-26.05 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| leap-agama-16.0 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| leap-agama-16.0 | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| leap-agama-16.0 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | leap-agama-16.0 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | leap-agama-16.0 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| truenas-25.10.7 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| truenas-25.10.7 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | truenas-25.10.7 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | truenas-25.10.7 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| gentoo-min-20260510 | off | chain | FAIL | no userland within 300s (screen: text console) |
+| gentoo-min-20260510 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | gentoo-min-20260510 | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | gentoo-min-20260510 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| windows-11-25h2 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-11-25h2 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-11-25h2 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-11-25h2 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-11-25h2 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-11-25h2 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-server-2025 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-server-2025 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-server-2025 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-server-2025 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-server-2025 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-server-2025 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | esxi-7.0u3l | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | esxi-7.0u3l | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | esxi-8.0u3 | ms | drop | FAIL | no userland within 300s (screen: text console) |
 | esxi-8.0u3 | ms | chain | FAIL | no userland within 300s (screen: text console) |
 | esxi-8.0u3 | moksb | chain | FAIL | no userland within 300s (screen: graphical) |
 | opnsense-25.1 | off | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
-| opnsense-25.1 | off | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | opnsense-25.1 | off | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | ms | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | ms | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | own | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | own | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | moksb | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
-| opnsense-25.1 | moksb | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
+| opnsense-25.1 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | opnsense-25.1 | moksb | bless | FAIL | back at the menu: blessed boot failed while checking memory for the image: 0x8000000000000009 (screen: text console) |
 | opnsense-25.1 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | opnsense-25.1 | bios | chain | FAIL | no userland within 300s (screen: text console) |
+| pfsense-plus-24.06b7 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | ms | drop | FAIL | back at the menu: the memory-disk boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x8000000000000003 (screen: text console) |
 | pfsense-plus-24.06b7 | ms | chain | FAIL | back at the menu: boot failed while LoadImage of \EFI\BOOT\BOOTX64.EFI (shim): 0x8000000000000003 (screen: text console) |
 | pfsense-plus-24.06b7 | ms | bless | FAIL | back at the menu: blessed boot failed while LoadImage of the image (shim): 0x8000000000000003 (screen: text console) |
@@ -215,57 +309,84 @@ Loader: 0.2.0_20261025.1825.dev, 0.2.0_20261025.2021.dev
 | pfsense-plus-24.06b7 | moksb | bless | REFUSED | LoadImage of the image (firmware)/LoadImage of the image (firmware)refused (screen: text console) |
 | pfsense-plus-24.06b7 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | pfsense-plus-24.06b7 | bios | chain | FAIL | no userland within 300s (screen: text console) |
-| bazzite-stable | ms | drop | FAIL | no userland within 300s (screen: text console) |
+| bazzite-stable | off | chain | FAIL | no userland within 300s (screen: text console) |
 | bazzite-stable | ms | chain | FAIL | no userland within 300s (screen: text console) |
+| bazzite-stable | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | bazzite-stable | moksb | bless | REFUSED | naming the image on the synthetic filesystemOKLoadImage of the image (firmware)LoadImage of the image (firmware)refus (screen: text console) |
 | bazzite-stable | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | alpine-std-x86-3.24.2 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | alpine-std-x86-3.24.2 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| alpine-std-x86-3.24.2 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
 | archlinux32-2024.07.10 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | archlinux32-2024.07.10 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| archlinux32-2024.07.10 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
 | debian-netinst-12.15-i386 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | debian-netinst-12.15-i386 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
+| debian-netinst-12.15-i386 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-10-22h2-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-10-22h2-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor. (screen: graphical) |
 | windows-10-22h2-x86 | bios32 | chain | FAIL | back at the menu: boot failed while checking the processor. (screen: graphical) |
+| windows-10-22h2-x86 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x86 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x86 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x64 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x64 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x64 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x64 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x64 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-10-22h2-x64 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | freedos-1.4-live | bios | drop | FAIL | no userland on serial within 300s after starting the kernel (screen: text console) |
 | freedos-1.4-live | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | freedos-1.4-live | bios32 | drop | FAIL | no userland on serial within 300s after starting the kernel (screen: text console) |
 | freedos-1.4-live | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| freedos-1.4-live | bios32-sse2 | drop | FAIL | no userland on serial within 300s after starting the kernel (screen: text console) |
+| freedos-1.4-live | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
 | reactos-0.4.16 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | reactos-0.4.16 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
+| reactos-0.4.16 | bios32-sse2 | drop | FAIL | no userland within 300s (screen: graphical) |
+| reactos-0.4.16 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: graphical) |
 | freebsd-disc1-14.5-i386 | bios | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image. (screen: graphical) |
 | freebsd-disc1-14.5-i386 | bios | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image. (screen: graphical) |
 | freebsd-disc1-14.5-i386 | bios32 | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image. (screen: graphical) |
 | freebsd-disc1-14.5-i386 | bios32 | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image. (screen: graphical) |
-| openbsd-7.9-i386 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
+| freebsd-disc1-14.5-i386 | bios32-sse2 | drop | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image. (screen: graphical) |
+| freebsd-disc1-14.5-i386 | bios32-sse2 | chain | FAIL | back at the menu: the memory-disk boot failed while checking memory for the image. (screen: graphical) |
+| openbsd-7.9-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | openbsd-7.9-i386 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
 | openbsd-7.9-i386 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | openbsd-7.9-i386 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
+| openbsd-7.9-i386 | bios32-sse2 | drop | FAIL | no userland within 300s (screen: graphical) |
+| openbsd-7.9-i386 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: graphical) |
 | netbsd-10.2-i386 | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | netbsd-10.2-i386 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | netbsd-10.2-i386 | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
 | netbsd-10.2-i386 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| netbsd-10.2-i386 | bios32-sse2 | drop | FAIL | no userland within 300s (screen: text console) |
+| netbsd-10.2-i386 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios | drop | FAIL | no userland within 300s (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios32 | drop | FAIL | no userland within 300s (screen: text console) |
 | haiku-r1b6-x86_gcc2h | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios32-sse2 | drop | FAIL | no userland within 300s (screen: text console) |
+| haiku-r1b6-x86_gcc2h | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.2.0-5-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | clonezilla-3.2.0-5-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| clonezilla-3.2.0-5-i686 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | gparted-1.6.0-10-i686 | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
+| gparted-1.6.0-10-i686 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
+| memtest86-11-x64 | bios | drop | FAIL | back at the menu: boot failed while reading the ISO's boot catalog. (screen: graphical) |
+| memtest86-11-x64 | bios | chain | FAIL | back at the menu: boot failed while reading the ISO's boot catalog. (screen: graphical) |
 | antix-26-386-full | bios | chain | FAIL | no userland within 300s (screen: text console) |
 | antix-26-386-full | bios32 | chain | FAIL | no userland within 300s (screen: text console) |
-| windows-2000-pro-x86 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
-| windows-2000-pro-x86 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-2000-pro-x86 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
-| windows-2000-pro-x86 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-xp-pro-sp3-x86 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
+| antix-26-386-full | bios32-sse2 | chain | FAIL | no userland within 300s (screen: text console) |
 | windows-xp-pro-sp3-x86 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
-| windows-xp-pro-sp3-x86 | bios32 | drop | FAIL | no userland within 300s (screen: graphical) |
 | windows-xp-pro-sp3-x86 | bios32 | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-xp-pro-sp3-x86 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-xp-pro-sp3-x86 | bios-usb | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-xp-pro-sp3-x86 | bios-usb-late | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-xp-pro-x64 | off | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-xp-pro-x64 | off | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-xp-pro-x64 | ms | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
@@ -274,10 +395,17 @@ Loader: 0.2.0_20261025.1825.dev, 0.2.0_20261025.2021.dev
 | windows-xp-pro-x64 | own | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-xp-pro-x64 | moksb | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-xp-pro-x64 | moksb | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
-| windows-xp-pro-x64 | bios | drop | FAIL | no userland within 300s (screen: graphical) |
+| windows-xp-pro-x64 | bios | drop | FAIL | text: the screen did not change for 300s |
 | windows-xp-pro-x64 | bios | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-xp-pro-x64 | bios-usb | drop | FAIL | text: the screen did not change for 300s |
+| windows-xp-pro-x64 | bios-usb | chain | FAIL | no userland within 300s (screen: graphical) |
+| windows-xp-pro-x64 | bios-usb-late | drop | FAIL | text: the screen did not change for 300s |
+| windows-xp-pro-x64 | bios-usb-late | chain | FAIL | no userland within 300s (screen: graphical) |
 | windows-vista-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-vista-x86 | bios32 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-vista-x86 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-vista-x86 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-vista-x86 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-vista-sp1-x64 | off | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | off | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | ms | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
@@ -287,17 +415,40 @@ Loader: 0.2.0_20261025.1825.dev, 0.2.0_20261025.2021.dev
 | windows-vista-sp1-x64 | moksb | drop | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | moksb | chain | FAIL | back at the menu: boot failed while finding the medium's EFI System Partition: 0x800000000000000e (screen: text console) |
 | windows-vista-sp1-x64 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-vista-sp1-x64 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-vista-sp1-x64 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-7-sp1-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-7-sp1-x86 | bios32 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-7-sp1-x86 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-7-sp1-x86 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-7-sp1-x86 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-7-x64 | off | drop | FAIL | no userland within 300s (screen: text console) |
 | windows-7-x64 | off | chain | FAIL | no userland within 300s (screen: text console) |
 | windows-7-x64 | moksb | drop | FAIL | no userland within 300s (screen: text console) |
 | windows-7-x64 | moksb | chain | FAIL | no userland within 300s (screen: text console) |
 | windows-7-x64 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-7-x64 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-7-x64 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-8.1-x86 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-8.1-x86 | bios32 | drop | FAIL | back at the menu: boot failed while checking the processor. (screen: graphical) |
 | windows-8.1-x86 | bios32 | chain | FAIL | back at the menu: boot failed while checking the processor. (screen: graphical) |
+| windows-8.1-x86 | bios32-sse2 | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x86 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x86 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x64 | off | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x64 | ms | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x64 | moksb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
 | windows-8.1-x64 | bios | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x64 | bios-usb | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| windows-8.1-x64 | bios-usb-late | chain | FAIL | no userland within 300s (screen: Windows Setup) |
+| debian-netinst-13.7-arm64 | a64-off | chain | FAIL | no userland within 1200s (screen: graphical) |
+| debian-netinst-13.7-arm64 | a64-ms | chain | FAIL | no userland within 1200s (screen: graphical) |
+| fedora-ws-44-arm64 | a64-off | chain | FAIL | initramfs gave up: [  322.021501] dracut-initqueue[565]: Warning: dracut-initqueue: timeout, still waiting for followin (screen: text console) |
 | fedora-ws-44-arm64 | a64-ms | drop | FAIL | back at the menu: the kernel exited, status 0x800000000000000e (screen: graphical) |
-| fedora-ws-44-arm64 | a64-ms | chain | FAIL | back at the menu: the kernel exited, status 0x800000000000000e (screen: graphical) |
+| fedora-ws-44-arm64 | a64-ms | chain | FAIL | no userland within 1200s (screen: text console) |
+| opensuse-tw-20261020-arm64 | a64-off | chain | FAIL | initramfs gave up: [  326.405131] dracut-initqueue[595]: Warning: dracut-initqueue: timeout, still waiting for followin (screen: Windows Setup) |
+| opensuse-tw-20261020-arm64 | a64-ms | chain | FAIL | initramfs gave up: [  307.331569] dracut-initqueue[595]: Warning: dracut-initqueue: timeout, still waiting for followin (screen: Windows Setup) |
+| alpine-std-3.24.3-arm64 | a64-off | chain | FAIL | no userland within 1200s (screen: text console) |
+| windows-11-arm64 | a64-off | chain | FAIL | no userland within 1200s (screen: Windows Setup) |
+| windows-11-arm64 | a64-ms | chain | FAIL | no userland within 1200s (screen: Windows Setup) |
 
